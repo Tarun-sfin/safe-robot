@@ -45,6 +45,7 @@ test.describe('Online Apps — desk-case robot', () => {
       await bar.gate(idx); // Click a stage in the tracker to freeze here.
 
       console.log(`[stage] ${flow.label()}`);
+      const before = page.url();
       const result = await flow.step();
 
       if (result === 'bank') {
@@ -55,7 +56,7 @@ test.describe('Online Apps — desk-case robot', () => {
         await bar.finish(result === 'done');
         return;
       }
-      await page.waitForTimeout(1200);
+      await waitNav(page, before);
     }
 
     if (!reachedBank) {
@@ -131,9 +132,10 @@ test.describe('Online Apps — desk-case robot', () => {
         await bar.gate(idx);
 
         console.log(`[stage] ${flow.label()}`);
+        const before = page.url();
         const result = await flow.step();
         if (result === 'done' || result === 'rejected') break;
-        await page.waitForTimeout(1500);
+        await waitNav(page, before);
       }
 
       if (/\/loan\/success/i.test(page.url())) {
@@ -154,6 +156,19 @@ test.describe('Online Apps — desk-case robot', () => {
     }
   });
 });
+
+/**
+ * Wait until the URL changes away from `before` (navigation happened), or fall
+ * through after a short grace period for screens that stay on the same URL
+ * (polling screens, multi-part sub-forms). Prevents re-entering a step while it
+ * is still transitioning.
+ */
+async function waitNav(page: Page, before: string): Promise<void> {
+  await page
+    .waitForURL((u) => u.toString() !== before, { timeout: 9_000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(500);
+}
 
 /** One HUD per page (cached on the page object). */
 function hud(page: Page): Hud {
