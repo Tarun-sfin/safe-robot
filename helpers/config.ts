@@ -13,14 +13,11 @@ const defaults = {
   beta: {
     appBaseUrl: 'https://beta2.safefinancial.com.au',
     statementPostUrl: 'https://safe-api-beta.azurewebsites.net/bank-feed/submission-response',
-    // Beta is deployed under /apply/.
     startPath: '/apply/mini-loan',
   },
   local: {
-    // Angular dev server + local LBP.OnlineApp API (localhost:5000).
     appBaseUrl: 'http://localhost:4200',
     statementPostUrl: 'http://localhost:5000/bank-feed/submission-response',
-    // ng serve uses base href "/".
     startPath: '/mini-loan',
   },
 }[target];
@@ -41,6 +38,10 @@ export const config = {
   continueToSubmit: bool('CONTINUE_TO_SUBMIT', true),
   /** Stop cleanly once the bank step + verification code are reached (no inject). */
   stopAtBank: bool('STOP_AT_BANK', false),
+  /** Auto hand-over (freeze) at this stage so you can drive it by hand. '' = off. */
+  handoverStage: process.env.HANDOVER_AT ?? '',
+  /** Start paused (press Resume in the HUD to begin). */
+  startPaused: bool('START_PAUSED', false),
 };
 
 /** Base URL used by Playwright's config too. */

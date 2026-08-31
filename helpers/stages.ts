@@ -35,7 +35,6 @@ export function stageIndexForUrl(url: string): number {
     [/\/loan\/references/i, 'References'],
     [/\/loan\/(submit|loading-outcome)/i, 'Submit'],
     [/\/loan\/(success|reject)/i, 'Done'],
-    // Everything before purpose (landing, eligible, warning, source) = Start.
     [/mini-loan|\/loan\/(eligible|warning|source)/i, 'Start'],
   ];
   for (const [re, name] of rules) {

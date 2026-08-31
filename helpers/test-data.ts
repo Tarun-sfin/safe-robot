@@ -10,12 +10,9 @@ export type ApplicantData = {
   dobYear: string;
   phone: string;
   email: string;
-  /** Driver licence details for the identity step. */
   licenceState: 'NSW' | 'VIC' | 'QLD' | 'SA' | 'WA' | 'TAS' | 'ACT' | 'NT';
   licenceNo: string;
-  /** A single free-text address line for the Google Places field. */
   address: string;
-  /** Reference contact (must differ from the applicant). */
   reference: {
     firstName: string;
     lastName: string;
@@ -24,7 +21,6 @@ export type ApplicantData = {
 };
 
 function auMobile(): string {
-  // AU mobile: 04xx xxx xxx — digits only for the phone mask field.
   return `04${faker.string.numeric(8)}`;
 }
 
@@ -60,7 +56,6 @@ export function makeApplicant(): ApplicantData {
     phone: auMobile(),
     email,
     licenceState: 'NSW',
-    // NSW licences are up to 8 digits; keep it simple and unique-ish.
     licenceNo: faker.string.numeric(8),
     address: '1 Martin Place, Sydney NSW 2000',
     reference: {

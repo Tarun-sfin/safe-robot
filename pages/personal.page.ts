@@ -1,21 +1,23 @@
-import { Page } from '@playwright/test';
+import { Page, expect, Locator } from '@playwright/test';
 import { ApplicantData } from '../helpers/test-data';
 
 /** Personal details step — selectors match personal.component.html. */
 export class PersonalPage {
   constructor(private page: Page) {}
 
-  async fill(data: ApplicantData) {
-    // Fail-soft: if the personal form isn't actually here (e.g. the page already
-    // navigated on), bail out instead of blocking — the driver loop re-evaluates.
-    const here = await this.page
-      .locator('#first')
-      .waitFor({ state: 'visible', timeout: 15_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!here) return;
+  /** ngx-mask fields ignore .fill(); type digit-by-digit and blur to commit. */
+  private async typeMasked(sel: string, value: string) {
+    const el = this.page.locator(sel);
+    await el.click();
+    await el.fill('').catch(() => undefined);
+    await el.pressSequentially(value, { delay: 40 });
+    await el.blur().catch(() => undefined);
+  }
 
-    // Title is a clickable tile, not a <select>.
+  async fill(data: ApplicantData) {
+    await expect(this.page.locator('#first')).toBeVisible({ timeout: 60_000 });
+
+    // Title is a clickable tile that sets a hidden control.
     await this.page
       .locator('.jump.std-block', { hasText: new RegExp(`^\\s*${data.title}\\s*$`, 'i') })
       .first()
@@ -28,37 +30,39 @@ export class PersonalPage {
     }
     await this.page.locator('#last').fill(data.lastName);
 
-    // DOB + phone are ngx-mask inputs — type digit-by-digit so the mask and the
-    // (input)/(blur) validators fire (plain .fill() leaves the form invalid).
+    // DOB + phone are ngx-mask inputs — must be typed to fire (input)/(blur).
     await this.typeMasked('#dobDay', data.dobDay);
     await this.typeMasked('#dobMonth', data.dobMonth);
     await this.typeMasked('#dobYear', data.dobYear);
-    // Blur the DOB group to trigger the final date validation.
-    await this.page.locator('#last').click().catch(() => undefined);
-
     await this.typeMasked('#mobile', data.phone);
 
     await this.page.locator('#email').click();
     await this.page.locator('#email').fill(data.email);
-    // Blur to trigger email/domain validation.
-    await this.page.locator('#last').click().catch(() => undefined);
+    await this.page.locator('#email').blur().catch(() => undefined);
 
-    // Credit-check consent: the visible checkbox is opacity-0; the wrapper with
-    // "By ticking this box" runs accept(). Without it, Next stays disabled.
-    const consent = this.page.getByText(/By ticking this box/i).first();
-    if (await consent.isVisible().catch(() => false)) {
-      await consent.click().catch(() => undefined);
+    // Tick the required consent (wrapper handles the click; input is opacity-0).
+    // Idempotent: accept() toggles, so only click when not already checked.
+    const consent = this.page.locator('.cursor-pointer', { hasText: /acknowledge/i }).first();
+    if (await consent.count()) {
+      const box = consent.locator('input[type="checkbox"]').first();
+      const checked = (await box.count()) ? await box.isChecked().catch(() => false) : false;
+      if (!checked) await consent.click().catch(() => undefined);
     }
   }
 
-  private async typeMasked(selector: string, value: string) {
-    const el = this.page.locator(selector);
-    await el.click().catch(() => undefined);
-    await el.fill('').catch(() => undefined);
-    await el.pressSequentially(value, { delay: 40 }).catch(() => undefined);
+  /** Wait for the async email/domain validation to settle and Next to enable. */
+  async waitForNextEnabled(timeoutMs = 20_000): Promise<Locator> {
+    const next = this.page.getByRole('button', { name: /^Next$/i }).first();
+    await expect(next).toBeEnabled({ timeout: timeoutMs });
+    return next;
   }
 
   async next() {
-    await this.page.getByRole('button', { name: /^Next$/i }).click();
+    const next = await this.waitForNextEnabled().catch(() => null);
+    if (next) {
+      await next.click();
+    } else {
+      await this.page.getByRole('button', { name: /^Next$/i }).click({ force: true }).catch(() => undefined);
+    }
   }
 }

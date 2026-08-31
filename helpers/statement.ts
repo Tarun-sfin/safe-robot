@@ -3,12 +3,9 @@ import { APIRequestContext } from '@playwright/test';
 import { config } from './config';
 
 /**
- * You keep ONE static statement file forever.
- * Only customer.reference must match the current page verification code:
- *   SFPM-{code}
- *
- * Top-level "reference" is a BankFeeds submission UUID — leave it alone.
- * Backend lookup: GetBankRequestByCode(customer.reference.Substring(5))
+ * Keep ONE static statement file. Only customer.reference must match the current
+ * page verification code: SFPM-{code}. Top-level "reference" is a BankFeeds
+ * submission UUID — leave it alone.
  */
 export function loadStatementForCode(verificationCode: string): string {
   if (!fs.existsSync(config.statementFile)) {
@@ -38,10 +35,7 @@ export function loadStatementForCode(verificationCode: string): string {
   return JSON.stringify(json);
 }
 
-/**
- * Same as Postman:
- * POST https://safe-api-beta.azurewebsites.net/bank-feed/submission-response
- */
+/** Same as Postman: POST the statement JSON to the submission-response endpoint. */
 export async function postBankStatement(
   request: APIRequestContext,
   verificationCode: string,

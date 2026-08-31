@@ -1,5 +1,5 @@
 {
-  "_comment": "PLACEHOLDER — replace this file contents with your real Postman request body (raw JSON). Then copy to bank-statement.json. The script rewrites customer.reference and reference to SFPM-{verificationCode} before posting.",
+  "_comment": "PLACEHOLDER — replace with your real Postman request body (raw JSON), then copy to bank-statement.json. The script rewrites customer.reference to SFPM-{verificationCode} before posting.",
   "reference": "SFPM-REPLACE_ME",
   "customer": {
     "reference": "SFPM-REPLACE_ME",
@@ -7,8 +7,6 @@
     "encryptionKey": null,
     "hasMFA": false
   },
-  "bankData": {
-    "banks": []
-  },
+  "bankData": { "banks": [] },
   "error_code": null
 }

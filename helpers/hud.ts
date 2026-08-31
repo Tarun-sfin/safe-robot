@@ -10,15 +10,19 @@ export interface HudOptions {
   enabled: boolean;
   /** Ordered stage labels drawn left-to-right. */
   stages: string[];
+  /** Start paused (robot waits for Resume before it moves). */
+  startPaused: boolean;
 }
 
 /**
- * On-screen, brand-coloured progress tracker injected into the app by Playwright.
+ * On-screen, brand-coloured control bar injected into the app by Playwright.
  *
- * - A fixed bottom bar showing every stage (Start → Purpose → … → Done) in Safe
- *   Financial red/white; finished stages go solid red, the current one pulses.
- * - Click any stage to HAND OVER: the robot drives up to that stage, then freezes
- *   so you can take the wheel manually. Click the same stage again to resume.
+ * - A prominent, always-visible Pause / Resume button on the left (never covered).
+ * - A progress tracker of every stage (Start -> ... -> Done); finished stages go
+ *   solid red, the current one pulses.
+ * - Pause freezes the robot between steps so you can drive a tricky screen (e.g.
+ *   the address) by hand, then Resume. You can also click a specific stage to
+ *   hand over exactly there.
  * - Desktop-only (hidden on mobile widths) and only on the allowed hosts.
  *
  * Nothing here touches the real Angular app — it is layered on at runtime.
@@ -34,59 +38,56 @@ export class Hud {
     });
   }
 
-  /** Highlight the current stage (index into STAGES). */
   async setStage(index: number): Promise<void> {
     if (!this.opts.enabled || index < 0) return;
     await this.page.evaluate((i) => (window as any).__robot?.setStage?.(i), index).catch(() => undefined);
   }
 
-  /** Mark the final stage as success/failure. */
   async finish(ok: boolean): Promise<void> {
     if (!this.opts.enabled) return;
     await this.page.evaluate((v) => (window as any).__robot?.finish?.(v), ok).catch(() => undefined);
   }
 
-  /** Update the left-hand banner text (applicant / status). */
   async banner(text: string): Promise<void> {
     if (!this.opts.enabled) return;
     await this.page.evaluate((t) => (window as any).__robot?.setBanner?.(t), text).catch(() => undefined);
   }
 
-  private async shouldFreeze(index: number): Promise<boolean> {
-    if (!this.opts.enabled) return false;
+  private async pauseState(): Promise<{ paused: boolean; handoverAt: number | null }> {
+    if (!this.opts.enabled) return { paused: false, handoverAt: null };
     return this.page
-      .evaluate((i) => {
-        const r = (window as any).__robot;
-        if (!r) return false;
-        if (r.paused) return true;
-        return r.handoverAt !== null && i >= r.handoverAt;
-      }, index)
-      .catch(() => false);
+      .evaluate(() => ({
+        paused: !!(window as any).__robot?.paused,
+        handoverAt: (window as any).__robot?.handoverAt ?? null,
+      }))
+      .catch(() => ({ paused: false, handoverAt: null as number | null }));
   }
 
   /**
-   * Called before driving the stage at `index`. Freezes here if the operator
-   * pressed Pause, or clicked a stage at/before this one. Stays frozen until
-   * they press Resume — then the robot carries on from whatever screen is
-   * currently shown (so your manual steps are respected).
+   * Called before driving the stage at `index`. Freezes if the operator pressed
+   * Pause, or clicked a stage at/after which to hand over. Resumes when they
+   * press Resume (or un-arm the stage).
    */
   async gate(index: number): Promise<void> {
     if (!this.opts.enabled) return;
-    if (!(await this.shouldFreeze(index))) return;
+    const frozen = (s: { paused: boolean; handoverAt: number | null }) =>
+      s.paused || (s.handoverAt !== null && index >= s.handoverAt);
 
-    await this.banner('PAUSED — do your manual steps, then press ▶ Resume.');
+    if (!frozen(await this.pauseState())) return;
+
+    await this.banner('Paused — drive this screen yourself, then press Resume.');
     console.log(`[hud] paused at "${STAGES[index] ?? index}" — waiting for Resume…`);
     for (;;) {
       await this.page.waitForTimeout(400);
-      if (!(await this.shouldFreeze(index))) break;
+      if (!frozen(await this.pauseState())) break;
     }
-    await this.banner('RUNNING');
+    await this.banner('Running…');
     console.log('[hud] resumed.');
   }
 }
 
 /**
- * Runs INSIDE the browser. Builds the tracker and exposes `window.__robot`.
+ * Runs INSIDE the browser. Builds the control bar and exposes `window.__robot`.
  * Self-contained (no external refs) because it is serialized into the page.
  */
 function hudInitScript(opts: HudOptions): void {
@@ -101,16 +102,18 @@ function hudInitScript(opts: HudOptions): void {
   w.__robotInstalled = true;
   const RED = '#EF4035';
   const RED_DARK = '#C2180E';
+  const GREEN = '#2FB84D';
   const GRAY = '#90979A';
 
   w.__robot = w.__robot || {
     current: -1,
     handoverAt: null as number | null,
-    paused: false,
+    paused: !!opts.startPaused,
     stages: opts.stages,
     setStage(_i: number) {},
     setBanner(_t: string) {},
     finish(_ok: boolean) {},
+    togglePause() {},
   };
 
   const build = () => {
@@ -147,6 +150,37 @@ function hudInitScript(opts: HudOptions): void {
       ].join(';'),
     );
 
+    // --- Pause / Resume button (prominent, first, never covered) ---
+    const pauseBtn = document.createElement('button');
+    pauseBtn.type = 'button';
+    pauseBtn.id = '__robot_pause';
+    const paintPause = () => {
+      const paused = !!w.__robot.paused;
+      pauseBtn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+      pauseBtn.setAttribute(
+        'style',
+        [
+          'flex:0 0 auto',
+          'cursor:pointer',
+          'border:none',
+          'border-radius:8px',
+          'padding:8px 16px',
+          'font-weight:800',
+          'font-size:13px',
+          'color:#fff',
+          'min-width:104px',
+          'background:' + (paused ? GREEN : RED),
+        ].join(';'),
+      );
+    };
+    pauseBtn.onclick = () => {
+      w.__robot.paused = !w.__robot.paused;
+      paintPause();
+      banner.textContent = w.__robot.paused
+        ? 'Paused — drive this screen yourself, then press Resume.'
+        : 'Running…';
+    };
+
     const brand = document.createElement('div');
     brand.innerHTML =
       '<span style="font-weight:800;letter-spacing:1px;color:' +
@@ -154,37 +188,13 @@ function hudInitScript(opts: HudOptions): void {
       '">SAFE</span><span style="font-weight:800;letter-spacing:1px;color:#434956"> ROBOT</span>';
     brand.setAttribute('style', 'white-space:nowrap;flex:0 0 auto');
 
-    const mkBtn = (label: string, bg: string) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = label;
-      b.setAttribute(
-        'style',
-        'flex:0 0 auto;cursor:pointer;border:none;border-radius:6px;padding:6px 12px;font-weight:700;font-size:12px;color:#fff;background:' +
-          bg,
-      );
-      return b;
-    };
-    const pauseBtn = mkBtn('⏸ Pause', GRAY);
-    const resumeBtn = mkBtn('▶ Resume', '#4DCD2A');
-    pauseBtn.onclick = () => {
-      w.__robot.paused = true;
-      paint();
-    };
-    resumeBtn.onclick = () => {
-      // Resume from wherever the page currently is (respects your manual steps).
-      w.__robot.paused = false;
-      w.__robot.handoverAt = null;
-      paint();
-    };
-
     const banner = document.createElement('div');
     banner.id = '__robot_banner';
     banner.setAttribute(
       'style',
-      'white-space:nowrap;flex:0 0 auto;color:' + GRAY + ';max-width:260px;overflow:hidden;text-overflow:ellipsis',
+      'white-space:nowrap;flex:0 1 auto;color:' + GRAY + ';max-width:200px;overflow:hidden;text-overflow:ellipsis',
     );
-    banner.textContent = 'Starting…';
+    banner.textContent = w.__robot.paused ? 'Paused' : 'Starting…';
 
     const divider = document.createElement('span');
     divider.setAttribute('style', 'width:1px;height:22px;background:#e5e7eb;flex:0 0 auto');
@@ -201,10 +211,9 @@ function hudInitScript(opts: HudOptions): void {
       const pill = document.createElement('button');
       pill.type = 'button';
       pill.textContent = name;
-      pill.title = 'Click to take over from here';
+      pill.title = 'Click to hand over from this stage';
       pill.dataset.i = String(i);
       pill.onclick = () => {
-        // Toggle hand-over at this stage.
         w.__robot.handoverAt = w.__robot.handoverAt === i ? null : i;
         paint();
       };
@@ -238,19 +247,12 @@ function hudInitScript(opts: HudOptions): void {
         }
         p.setAttribute('style', s);
       });
-      // Auto-scroll to keep the current pill in view.
       const curPill = pills[cur];
       if (curPill) curPill.scrollIntoView({ inline: 'center', block: 'nearest' });
-
-      // Frozen = explicitly paused, or we've reached a clicked hand-over stage.
-      const frozen = w.__robot.paused || (ho !== null && cur >= ho);
-      pauseBtn.style.display = frozen ? 'none' : 'inline-block';
-      resumeBtn.style.display = frozen ? 'inline-block' : 'none';
     };
 
-    bar.appendChild(brand);
     bar.appendChild(pauseBtn);
-    bar.appendChild(resumeBtn);
+    bar.appendChild(brand);
     bar.appendChild(banner);
     bar.appendChild(divider);
     bar.appendChild(track);
@@ -263,6 +265,7 @@ function hudInitScript(opts: HudOptions): void {
     w.__robot.setBanner = (t: string) => {
       banner.textContent = t;
     };
+    w.__robot.togglePause = () => pauseBtn.click();
     w.__robot.finish = (ok: boolean) => {
       w.__robot.current = opts.stages.length - 1;
       paint();
@@ -281,6 +284,7 @@ function hudInitScript(opts: HudOptions): void {
       }
     };
 
+    paintPause();
     paint();
 
     const applyVisibility = () => {

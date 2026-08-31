@@ -24,7 +24,7 @@ export class WizardFlow {
     this.w = new WizardHelpers(page);
   }
 
-  /** A short, human label for the current screen (for the HUD). */
+  /** A short, human label for the current screen. */
   label(): string {
     const u = this.page.url();
     const map: [RegExp, string][] = [
@@ -89,7 +89,6 @@ export class WizardFlow {
     if (/\/loan\/submit/i.test(u)) return this.submit();
     if (/\/loan\/loading-outcome/i.test(u)) return this.waitScreen();
 
-    // Unknown screen: best-effort.
     await this.w.clickFirstTile();
     await this.w.clickPrimary();
     return 'unknown';
@@ -98,7 +97,6 @@ export class WizardFlow {
   // ---- individual step handlers -------------------------------------------
 
   private async landing(): Promise<StepResult> {
-    // Pick a repayment term tile if present, then the "Apply Now" CTA.
     await this.w.clickFirstTile().catch(() => undefined);
     const apply = this.page.getByRole('button', { name: /apply now|apply|get started/i }).first();
     const link = this.page.locator('a[role="button"]', { hasText: /apply now/i }).first();
@@ -128,7 +126,6 @@ export class WizardFlow {
     if (await group.isVisible().catch(() => false)) {
       await group.click().catch(() => undefined);
     }
-    // Sub-category tiles render only after a group is chosen.
     const sub = this.page.locator('.jump.std-block.h-20').first();
     await sub.waitFor({ state: 'visible', timeout: 8000 }).catch(() => undefined);
     await sub.click().catch(() => undefined);
@@ -138,16 +135,21 @@ export class WizardFlow {
   }
 
   private async personalStep(): Promise<StepResult> {
+    // Guard against re-entry racing with navigation (which makes #first vanish).
+    if (!(await this.page.locator('#first').isVisible().catch(() => false))) {
+      return 'continue';
+    }
     await this.personal.fill(this.applicant);
     await this.page.waitForTimeout(300);
     await this.personal.next();
+    // Wait to actually leave the personal screen before the loop continues.
+    await this.page.waitForURL(/\/loan\/(family|identity|purpose)/i, { timeout: 20_000 }).catch(() => undefined);
     return 'continue';
   }
 
   private async family(): Promise<StepResult> {
     await this.w.clickChoice(/single/i);
     await this.page.waitForTimeout(300);
-    // Dependants = 0 (first tile).
     const zero = this.page.locator('.jump.std-block', { hasText: /^\s*0\s*$/ }).first();
     if (await zero.isVisible().catch(() => false)) await zero.click().catch(() => undefined);
     await this.page.waitForTimeout(200);
@@ -156,7 +158,6 @@ export class WizardFlow {
   }
 
   private async identity(): Promise<StepResult> {
-    // Driver-licence path is the default.
     const stateTile = this.page
       .locator('.std-block', { hasText: new RegExp(this.applicant.licenceState, 'i') })
       .first();
@@ -173,14 +174,13 @@ export class WizardFlow {
   }
 
   private async waitScreen(): Promise<StepResult> {
-    // Polling screens: just wait for navigation away.
     await this.page.waitForTimeout(3000);
     return 'continue';
   }
 
   /**
-   * "Review" lists (confirm-accounts income / expense-list): each raw item shows
-   * a "provide more details" link that opens a detail sub-form. Open each, fill
+   * "Review" lists (income-accounts / expense-list): each raw item shows a
+   * "provide more details" link that opens a detail sub-form. Open each, fill
    * it, confirm it, then advance with the page-level button when all are done.
    */
   private async reviewList(advance: RegExp, detailSel: string): Promise<StepResult> {
@@ -191,7 +191,7 @@ export class WizardFlow {
       await this.page.waitForTimeout(600);
       const detail = this.page.locator(detailSel).first();
       await this.confirmOpenDetail(detail);
-      await this.page.waitForTimeout(900); // save round-trip + re-render
+      await this.page.waitForTimeout(900);
     }
     if (!(await this.w.clickButton(advance))) await this.w.clickPrimary();
     return 'continue';
@@ -236,9 +236,7 @@ export class WizardFlow {
 
   /**
    * Fill and confirm a single open income/expense detail sub-form (scoped to
-   * that form so multiple open forms don't cross-fill). Handles: expense type,
-   * wage type + business name, amount, Frequency, card limit, loan purpose +
-   * balance, and recurring month/year.
+   * that form so multiple open forms don't cross-fill).
    */
   private async confirmOpenDetail(root: Locator): Promise<boolean> {
     await this.clickTileUnder(root, /type of expense/i);
@@ -249,18 +247,14 @@ export class WizardFlow {
       await bus.fill('Employer Pty Ltd').catch(() => undefined);
     }
     await this.typeMoney(root, '#abn', '51824753556');
-    // Manual/general amount ("How much do you pay?" / income amount).
     await this.typeMoney(root, '#ammend', '200');
 
-    // Frequency — required for most income & expense items.
     await this.clickTileUnder(root, /Frequency/i);
 
-    // Expense specifics.
     await this.typeMoney(root, '#cardlimit', '5000');
     await this.clickTileUnder(root, /purpose of this loan/i);
     await this.typeMoney(root, '#balance', '5000');
 
-    // Recurring "since" month/year dropdowns + manual deposit destination.
     for (const sel of ['#month', '#year']) {
       const dd = root.locator(sel).first();
       if (await dd.isVisible().catch(() => false)) {
@@ -278,20 +272,75 @@ export class WizardFlow {
     return false;
   }
 
-  private async occupancy(): Promise<StepResult> {
-    // 1. Address via Google Places autocomplete — type, then pick the first hit.
+  /**
+   * Address entry via the Google Places dropdown: type a partial address, wait
+   * for the ".pac-item" prediction list, then pick the first with the keyboard
+   * (ArrowDown + Enter) — exactly what a person does. Falls back to the app's
+   * manual street/state/postcode/suburb fields only if no predictions appear.
+   */
+  private async fillAddress(): Promise<void> {
     const addr = this.page.locator('#address').first();
     if (await addr.isVisible().catch(() => false)) {
       await addr.click().catch(() => undefined);
       await addr.fill('').catch(() => undefined);
-      await addr.pressSequentially(this.applicant.address, { delay: 70 }).catch(() => undefined);
-      await this.page.waitForTimeout(2000); // wait for Google predictions
-      await this.page.keyboard.press('ArrowDown').catch(() => undefined);
-      await this.page.keyboard.press('Enter').catch(() => undefined);
-      await this.page.waitForTimeout(700);
+      // Type slowly so Google's autocomplete has time to surface predictions.
+      await addr.pressSequentially('1 Martin Place, Sydney', { delay: 150 }).catch(() => undefined);
+
+      const item = this.page.locator('.pac-container .pac-item').first();
+      const gotList = await item
+        .waitFor({ state: 'visible', timeout: 15000 })
+        .then(() => true)
+        .catch(() => false);
+      if (gotList) {
+        await this.page.waitForTimeout(400);
+        // Keyboard select is the most reliable with ngx-google-places.
+        await this.page.keyboard.press('ArrowDown').catch(() => undefined);
+        await this.page.keyboard.press('Enter').catch(() => undefined);
+        await this.page.waitForTimeout(1500);
+        console.log('[address] selected a Google prediction.');
+      } else {
+        console.log('[address] no predictions appeared — using manual fields.');
+      }
     }
 
-    // 2. "Lived here since" month/year.
+    // Manual fallback (needManualEntry -> #street visible).
+    const street = this.page.locator('#street').first();
+    if (await street.isVisible().catch(() => false)) {
+      await street.fill('1 Martin Place').catch(() => undefined);
+      const state = this.page.locator('#state').first();
+      await state.selectOption('NSW').catch(async () => {
+        await state.selectOption({ label: 'NSW' }).catch(() => undefined);
+      });
+      const postcode = this.page.locator('#postcode').first();
+      await postcode.click().catch(() => undefined);
+      await postcode.pressSequentially('2000', { delay: 60 }).catch(() => undefined);
+      await postcode.blur().catch(() => undefined);
+
+      const suburb = this.page.locator('#suburb').first();
+      for (let i = 0; i < 20; i++) {
+        const opts = await suburb.locator('option').count().catch(() => 0);
+        if (opts > 0) break;
+        await this.page.waitForTimeout(400);
+      }
+      const sydney = suburb.locator('option', { hasText: /sydney/i }).first();
+      if (await sydney.count().catch(() => 0)) {
+        const val = await sydney.getAttribute('value').catch(() => null);
+        if (val) await suburb.selectOption(val).catch(() => undefined);
+      } else {
+        await suburb.selectOption({ index: 0 }).catch(() => undefined);
+      }
+      await suburb.dispatchEvent('change').catch(() => undefined);
+      await this.page.waitForTimeout(600);
+    }
+  }
+
+  private async occupancy(): Promise<StepResult> {
+    // If you filled the address by hand (hand-over), don't overwrite it.
+    const addrVal = await this.page.locator('#address').first().inputValue().catch(() => '');
+    if (!addrVal) {
+      await this.fillAddress();
+    }
+
     for (const sel of ['#from-month', '#from-year']) {
       const dd = this.page.locator(sel).first();
       if (await dd.isVisible().catch(() => false)) {
@@ -299,91 +348,114 @@ export class WizardFlow {
       }
     }
 
-    // 3. Occupancy group (prefer Renting) then subtype.
-    if (!(await this.w.clickChoice(/renting|rent/i))) {
-      const grp = this.page.locator('#occupancy-groups').locator('xpath=..').locator('.jump.std-block').first();
-      await grp.click().catch(() => undefined);
-    }
-    await this.page.waitForTimeout(700);
-    const subtype = this.page.locator('.jump.std-block.h-20').first();
-    if (await subtype.isVisible().catch(() => false)) {
-      await subtype.click().catch(() => undefined);
+    // Occupancy group: select only if none is chosen yet (avoid re-toggling).
+    const groupWrap = this.page.locator('#occupancy-groups').locator('xpath=..');
+    if ((await groupWrap.locator('.selected-block').count().catch(() => 0)) === 0) {
+      if (!(await this.w.clickChoice(/renting|rent/i))) {
+        await groupWrap.locator('.jump.std-block').first().click().catch(() => undefined);
+      }
       await this.page.waitForTimeout(700);
     }
 
-    // 4. Dynamic flow steps appear progressively as each is answered.
+    // Subtype: select only if none is chosen yet.
+    const subs = this.page.locator('.jump.std-block.h-20');
+    if ((await subs.count().catch(() => 0)) > 0 &&
+        (await this.page.locator('.jump.std-block.h-20.selected-block').count().catch(() => 0)) === 0) {
+      await subs.first().click().catch(() => undefined);
+      await this.page.waitForTimeout(700);
+    }
+
+    // Dynamic flow steps: answer EVERY unanswered tile-group, fill amounts/dates,
+    // until the Confirm button actually turns valid (red, not gray).
     const flow = () => this.page.locator('#accommodation').locator('xpath=..');
-    for (let r = 0; r < 10; r++) {
+    const confirmValid = async (): Promise<boolean> => {
+      const cls =
+        (await this.page.getByRole('button', { name: /^(Confirm|Next|Save)$/i }).last().getAttribute('class').catch(() => '')) ||
+        '';
+      return cls.includes('bg-red-500') && !cls.includes('bg-lightgray-600');
+    };
+
+    for (let pass = 0; pass < 10; pass++) {
       // Amount / text inputs.
       const inputs = flow().locator('input[id^="step-"]');
       const n = await inputs.count().catch(() => 0);
       for (let i = 0; i < n; i++) {
         const el = inputs.nth(i);
-        if (await el.isVisible().catch(() => false)) {
-          const val = await el.inputValue().catch(() => '');
-          if (!val) {
-            await el.click().catch(() => undefined);
-            await el.pressSequentially('200', { delay: 25 }).catch(() => undefined);
-            await el.blur().catch(() => undefined);
-          }
+        if ((await el.isVisible().catch(() => false)) && !(await el.inputValue().catch(() => 'x'))) {
+          await el.click().catch(() => undefined);
+          await el.pressSequentially('200', { delay: 25 }).catch(() => undefined);
+          await el.blur().catch(() => undefined);
         }
       }
       // Date selects.
       const selects = flow().locator('select[id^="step-"]');
       const sn = await selects.count().catch(() => 0);
-      for (let i = 0; i < sn; i++) {
-        await selects.nth(i).selectOption({ index: 1 }).catch(() => undefined);
-      }
-      // Answer one tile group per pass (reveals the next step).
-      const tile = flow().locator('.std-block:not(.selected-block)').first();
-      if (await tile.isVisible().catch(() => false)) {
-        await tile.click().catch(() => undefined);
-      }
-      await this.page.waitForTimeout(500);
+      for (let i = 0; i < sn; i++) await selects.nth(i).selectOption({ index: 1 }).catch(() => undefined);
 
-      const next = this.page.getByRole('button', { name: /^(Next|Confirm|Save)$/i }).last();
-      if (await next.isEnabled().catch(() => false)) break;
+      // Each tile-group (flex-wrap container): if it has no selected tile, pick the first.
+      const groups = flow().locator('div.flex.flex-wrap');
+      const gc = await groups.count().catch(() => 0);
+      for (let i = 0; i < gc; i++) {
+        const g = groups.nth(i);
+        if ((await g.locator('.std-block').count().catch(() => 0)) === 0) continue;
+        if ((await g.locator('.std-block.selected-block').count().catch(() => 0)) === 0) {
+          await g.locator('.std-block').first().click().catch(() => undefined);
+          await this.page.waitForTimeout(250);
+        }
+      }
+
+      if (await confirmValid()) break;
+      await this.page.waitForTimeout(400);
     }
 
-    await this.page.waitForTimeout(200);
-    // Diagnostic: the button is always enabled (disabled only while saving), so
-    // capture the screen + any visible validation errors before clicking.
-    const addrVal = await this.page.locator('#address').first().inputValue().catch(() => '(n/a)');
-    const errors = await this.page
-      .locator('.text-red-500')
-      .allInnerTexts()
-      .catch(() => [] as string[]);
-    console.log(`[occupancy] address="${addrVal}" errors=${JSON.stringify(errors.filter((e) => e.trim()))}`);
-    await this.page.screenshot({ path: 'test-results/occupancy-stuck.png', fullPage: true }).catch(() => undefined);
-
-    const nextBtn = this.page.getByRole('button', { name: /^(Next|Confirm|Save)$/i }).last();
-    if (!(await nextBtn.click().then(() => true).catch(() => false))) {
-      await this.w.clickPrimary();
-    }
+    const nextBtn = this.page.getByRole('button', { name: /^(Confirm|Next|Save)$/i }).last();
+    await nextBtn.click().catch(() => undefined);
+    await this.page.waitForTimeout(400);
     return 'continue';
   }
 
   private async discretionary(): Promise<StepResult> {
-    const opt = this.page.locator('label', { hasText: /gambling|not willing|entertainment/i }).first();
-    if (await opt.isVisible().catch(() => false)) {
-      await opt.click().catch(() => undefined);
-    } else {
-      await this.page.locator('input[type="checkbox"]').first().check().catch(() => undefined);
+    // Options render under *ngIf="loan" (loaded async), and each is a <label> with
+    // a click handler wrapping a readonly checkbox — so we must click the label and
+    // then confirm a checkbox actually registered as checked. "Next" only advances
+    // when getSelectedOptions().length > 0; otherwise it silently shows an inline
+    // error and stays put (the old handler's infinite loop).
+    const anyOption = this.page.locator('label:has(input[type="checkbox"])');
+    await anyOption.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
+
+    // Pick a concrete, non-"I'm not willing" option (prefer "Dining out").
+    const preferred = this.page.locator('label', { hasText: /dining out/i }).first();
+    const target = (await preferred.isVisible().catch(() => false))
+      ? preferred
+      : this.page.locator('label', { hasText: /gambling|bnpl|subscriptions|online retail/i }).first();
+
+    const checkedCount = () =>
+      this.page.locator('input[type="checkbox"]:checked').count().catch(() => 0);
+
+    for (let i = 0; i < 4 && (await checkedCount()) === 0; i++) {
+      await target.click().catch(() => undefined);
+      await this.page.waitForTimeout(300);
     }
-    await this.page.waitForTimeout(200);
-    await this.w.clickPrimary();
+
+    // Explicitly click Next (not the generic primary) and confirm we leave the page.
+    await this.page.getByRole('button', { name: /^Next$/i }).first().click().catch(() => undefined);
+    await this.page
+      .waitForURL((u) => !/\/loan\/discretionary-spending/i.test(u.href), { timeout: 8_000 })
+      .catch(() => undefined);
     return 'continue';
   }
 
   private async references(): Promise<StepResult> {
     const r = this.applicant.reference;
-    await this.page.locator('#first').fill(r.firstName).catch(() => undefined);
-    await this.page.locator('#last').fill(r.lastName).catch(() => undefined);
-    const phone = this.page.locator('#mobile');
+    const scope = this.page.locator('.white-block').first();
+    const root = (await scope.count()) ? scope : this.page.locator('body');
+    await root.locator('#first').first().fill(r.firstName).catch(() => undefined);
+    await root.locator('#last').first().fill(r.lastName).catch(() => undefined);
+    const phone = root.locator('#mobile').first();
     if (await phone.count()) {
       await phone.fill(r.phone).catch(() => undefined);
     } else {
-      await this.page.locator('input[formcontrolname="phone"]').fill(r.phone).catch(() => undefined);
+      await root.locator('input[formcontrolname="phone"]').first().fill(r.phone).catch(() => undefined);
     }
     await this.page.waitForTimeout(200);
     await this.w.clickPrimary();

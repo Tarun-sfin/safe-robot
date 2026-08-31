@@ -11,7 +11,7 @@ import { WizardFlow } from '../pages/flow';
  * Beta / localhost desk-case robot.
  *
  * Drives the whole mini-loan wizard with a fresh random identity each run
- * (new name every time → never hits the anti-duplicate policy), shows an
+ * (new name every time -> never hits the anti-duplicate policy), shows an
  * on-screen red/white progress tracker (desktop only), injects the bank
  * statement at the bank step (Postman replacement), then continues to a
  * successful submit — which is what triggers the AI-assessment HTML email.
@@ -34,8 +34,28 @@ test.describe('Online Apps — desk-case robot', () => {
     await expect(page.locator('body')).toBeVisible();
     await bar.banner(`${applicant.firstName} ${applicant.lastName}`);
 
+    // Auto hand-over at a fiddly stage (default: Living / address+occupancy).
+    const hoIdx = config.handoverStage ? STAGES.indexOf(config.handoverStage as any) : -1;
+    if (hoIdx >= 0) {
+      await page
+        .evaluate((i) => {
+          const r = (window as any).__robot;
+          if (r) r.handoverAt = i;
+        }, hoIdx)
+        .catch(() => undefined);
+      console.log(`Auto hand-over armed at stage "${config.handoverStage}" (index ${hoIdx}).`);
+    }
+
     // Begin listening for the bank verification code BEFORE we reach the bank step.
     const codePromise = wizard.waitForVerificationCode().catch(() => '');
+
+    // Log every bank poll so the terminal shows what the server returns.
+    page.on('response', async (r) => {
+      if (r.url().includes('/bank/check-new-statement')) {
+        const txt = await r.text().catch(() => '');
+        console.log(`[poll] check-new-statement ${r.status()} → ${txt.slice(0, 160)}`);
+      }
+    });
 
     // --- Drive to the bank step -------------------------------------------------
     let reachedBank = false;
@@ -45,7 +65,6 @@ test.describe('Online Apps — desk-case robot', () => {
       await bar.gate(idx); // Click a stage in the tracker to freeze here.
 
       console.log(`[stage] ${flow.label()}`);
-      const before = page.url();
       const result = await flow.step();
 
       if (result === 'bank') {
@@ -56,7 +75,7 @@ test.describe('Online Apps — desk-case robot', () => {
         await bar.finish(result === 'done');
         return;
       }
-      await waitNav(page, before);
+      await page.waitForTimeout(1200);
     }
 
     if (!reachedBank) {
@@ -87,14 +106,6 @@ test.describe('Online Apps — desk-case robot', () => {
       await page.pause();
     } else if (verificationCode) {
       // --- Inject the statement (replaces Postman) ------------------------------
-      // Log every bank poll so the terminal shows exactly what the server returns.
-      page.on('response', async (r) => {
-        if (r.url().includes('/bank/check-new-statement')) {
-          const txt = await r.text().catch(() => '');
-          console.log(`[poll] check-new-statement ${r.status()} → ${txt.slice(0, 200)}`);
-        }
-      });
-
       await postBankStatement(request, verificationCode);
       console.log('Statement posted. Advancing to the polling screen…');
 
@@ -105,12 +116,11 @@ test.describe('Online Apps — desk-case robot', () => {
       if (await wizard.clickButton(/send via postman/i)) {
         console.log('Clicked "Send via Postman" (devSubmit) → loading-statement.');
       } else {
-        console.log('WARNING: "Send via Postman" button not found — cannot advance to the poll screen.');
+        console.log('WARNING: "Send via Postman" not found — cannot advance to the poll screen.');
       }
       await bar.banner('Waiting for the statement to process…');
 
-      // The app itself navigates to confirm-accounts once the statement lands —
-      // the most reliable signal (more than guessing the poll response shape).
+      // The app itself navigates to confirm-accounts once the statement lands.
       await page
         .waitForURL(/\/budget\/(confirm-accounts|income-accounts)/i, { timeout: 6 * 60_000 })
         .catch(() => undefined);
@@ -132,10 +142,9 @@ test.describe('Online Apps — desk-case robot', () => {
         await bar.gate(idx);
 
         console.log(`[stage] ${flow.label()}`);
-        const before = page.url();
         const result = await flow.step();
         if (result === 'done' || result === 'rejected') break;
-        await waitNav(page, before);
+        await page.waitForTimeout(1500);
       }
 
       if (/\/loan\/success/i.test(page.url())) {
@@ -157,19 +166,6 @@ test.describe('Online Apps — desk-case robot', () => {
   });
 });
 
-/**
- * Wait until the URL changes away from `before` (navigation happened), or fall
- * through after a short grace period for screens that stay on the same URL
- * (polling screens, multi-part sub-forms). Prevents re-entering a step while it
- * is still transitioning.
- */
-async function waitNav(page: Page, before: string): Promise<void> {
-  await page
-    .waitForURL((u) => u.toString() !== before, { timeout: 9_000 })
-    .catch(() => undefined);
-  await page.waitForTimeout(500);
-}
-
 /** One HUD per page (cached on the page object). */
 function hud(page: Page): Hud {
   const anyPage = page as any;
@@ -179,6 +175,7 @@ function hud(page: Page): Hud {
       hosts: ['beta2.safefinancial', 'localhost', '127.0.0.1'],
       minWidth: 900,
       stages: [...STAGES],
+      startPaused: config.startPaused,
     });
   }
   return anyPage.__hud;
