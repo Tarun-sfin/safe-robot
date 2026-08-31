@@ -13,24 +13,20 @@ on the team can just double-click and run it.
 > Note on "APK": it can't literally be an Android `.apk` — it's a desktop
 > browser robot. The real deliverable is a Windows **`.exe`** one-click launcher.
 
-## IMPORTANT: there are TWO copies of the source
+## Single source of truth = THIS repo (`c:\Work\Safe-Financials\safe-robot\`)
 
-1. **`c:\Work\Safe-Financials\OnlineAppsV2\playwright-tests\`** — the **ACTIVE /
-   most up-to-date** source. This is where we develop and where the occupancy +
-   discretionary fixes live. It is **untracked** inside the OnlineAppsV2 git repo.
-2. **`c:\Work\Safe-Financials\safe-robot\`** — a **standalone git repo** a prior
-   agent created (branch `main`, 2 commits, clean, **NO remote → never pushed**).
-   It already contains the full packaging:
-   - `SafeRobot.exe` (compiled launcher, ~29 KB)
-   - `run-robot.bat`, `run-robot.ps1` (launchers), `build-exe.ps1` (rebuild script)
-   - `README.md` (good docs: Beta/Local prompt, auto-installs Node/deps/Chromium)
-   - **BUT its `pages/flow.ts` is STALE** (~125 ins / 72 del behind; no
-     `occupancy`/`discretionary` handlers). Needs to be re-synced from the
-     active copy before it's useful.
+As of 2026-08-31 we **consolidated to one copy**. The old duplicate dev copy at
+`OnlineAppsV2\playwright-tests\` has been **deleted**. From now on, **edit here**
+(`safe-robot`) — it's both the source you run and the source the exe uses.
 
-**Decision to make / recommended:** consolidate so `safe-robot` is the single
-source of truth (sync active source in, then only work there). For now we're
-still editing `playwright-tests` and will sync over.
+This repo (standalone git repo, branch `main`, **NO remote yet → never pushed**)
+contains everything:
+- `pages/`, `helpers/`, `tests/` — the robot logic (now includes the occupancy +
+  discretionary fixes, synced from the old dev copy)
+- `SafeRobot.exe` (compiled launcher), `run-robot.bat`, `run-robot.ps1`,
+  `build-exe.ps1` (rebuild script)
+- `README.md` (Beta/Local prompt, auto-installs Node/deps/Chromium)
+- `.env` + `fixtures/bank-statement.json` (real, git-ignored — do not share)
 
 ## Progress so far
 
@@ -119,11 +115,19 @@ command below; if it pauses at Start again, click Resume in the browser (or dig
 into `helpers/hud.ts` gate/startPaused logic).**
 
 ### Resume checklist (next session)
-1. Re-run the headed command (from `playwright-tests`) and confirm it advances
-   past `Discretionary spending` → `references` → `submit` → `/loan/success`.
-2. If good: sync `helpers/`, `pages/`, `tests/`, `playwright.config.ts`,
-   `tsconfig.json`, `package.json` from `playwright-tests` → `safe-robot`.
-3. Rebuild: `cd ..\..\safe-robot; powershell -ExecutionPolicy Bypass -File build-exe.ps1`.
-4. Commit in `safe-robot`, create a new GitHub repo, `git remote add origin …`, push.
-5. Delete redundant `playwright-tests\Run-Beta-Test.exe` and
-   `playwright-tests\run-beta-test.ps1`.
+1. Re-run the headed command (from `safe-robot`) and confirm it advances past
+   `Discretionary spending` → `references` → `submit` → `/loan/success`.
+   (Discretionary fix is committed but **not yet verified end-to-end**.)
+2. If it pauses at "Start", click Resume in the browser (intermittent HUD gate).
+3. Rebuild the exe only if you changed the launcher:
+   `powershell -ExecutionPolicy Bypass -File build-exe.ps1`.
+4. **Still TODO: create a GitHub repo + push** (`git remote add origin …; git push -u origin main`).
+5. To share: package the folder (exe included, secrets excluded) — see "How to
+   send it" notes; ship the demo/stop-at-bank flavor unless a real statement is
+   provided.
+
+### Done on 2026-08-31
+- Synced all source into `safe-robot`, rebuilt `SafeRobot.exe`, committed.
+- Deleted the duplicate `OnlineAppsV2\playwright-tests\` copy and its stray
+  `Run-Beta-Test.exe` / `run-beta-test.ps1`.
+- Left the FE's `questions` feature + `.gitignore` change for the user to commit.
