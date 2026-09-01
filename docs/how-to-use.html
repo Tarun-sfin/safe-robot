@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Safe Robot — How to Use</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #1f2937;
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+  }
+  .wrap { padding: 28px 34px; }
+  h1 { color: #dc2626; font-size: 24px; margin: 0 0 2px; }
+  .sub { color: #6b7280; font-size: 12px; margin: 0 0 18px; }
+  h2 {
+    font-size: 15px;
+    margin: 20px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 2px solid #fca5a5;
+    color: #b91c1c;
+  }
+  ol, ul { margin: 6px 0 6px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code {
+    background: #f3f4f6;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+  }
+  .box {
+    border: 1px solid #e5e7eb;
+    background: #fafafa;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 10px 0;
+  }
+  .warn {
+    border-left: 4px solid #f59e0b;
+    background: #fffbeb;
+    padding: 8px 12px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .tip {
+    border-left: 4px solid #16a34a;
+    background: #f0fdf4;
+    padding: 8px 12px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 1px solid #e5e7eb; padding: 6px 9px; text-align: left; font-size: 11.5px; }
+  th { background: #fef2f2; color: #b91c1c; }
+  .step-num { color: #dc2626; font-weight: bold; }
+  .footer { margin-top: 22px; color: #9ca3af; font-size: 10.5px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Safe Robot — How to Use</h1>
+  <p class="sub">An automated tester that fills out the Safe Financial loan application by itself and runs it through to a decision.</p>
+
+  <h2>What it does</h2>
+  <p>
+    Safe Robot opens a browser and drives the entire mini-loan application on its own — with a brand-new
+    made-up applicant each time — injects a bank statement, and continues all the way to the final
+    <strong>Submit</strong>. It is used to quickly test that the application journey works end to end.
+  </p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>A <strong>Windows 10 or 11</strong> PC.</li>
+    <li>An <strong>internet connection</strong> (only needed the first time you run it).</li>
+  </ul>
+
+  <h2>Running it — step by step</h2>
+  <ol>
+    <li><span class="step-num">Unzip the whole folder first.</span> Right-click the ZIP &rarr;
+        <em>Extract All…</em> &rarr; pick a location (e.g. your Desktop).
+        <strong>Do not run it from inside the ZIP</strong> — extract it first, or it will not work.</li>
+    <li><span class="step-num">Open the extracted <code>SafeRobot</code> folder</span> and
+        <strong>double-click <code>SafeRobot.exe</code></strong>.</li>
+    <li>If Windows shows a blue <em>“Windows protected your PC”</em> box, click
+        <strong>More info &rarr; Run anyway</strong>. (This just means the app isn’t signed — it’s safe.)</li>
+    <li><strong>First run only:</strong> it automatically sets itself up (installs a private copy of Node,
+        the dependencies, and the browser). This takes a few minutes and needs internet. The window may look
+        busy or quiet for a bit — that’s normal.</li>
+    <li>It asks <strong>Beta or Local</strong> — type <code>1</code> for Beta (or <code>2</code> for Local).</li>
+    <li>A browser window opens and the robot drives the whole application. When it finishes, the window stays
+        open with the result — press <strong>Enter</strong> to close it.</li>
+  </ol>
+
+  <div class="tip">
+    <strong>No exe?</strong> If your antivirus blocks <code>SafeRobot.exe</code>, you can instead
+    double-click <code>run-robot.bat</code> in the same folder — it does exactly the same thing.
+  </div>
+
+  <h2>Choosing what it tests</h2>
+  <p>Double-clicking runs the default (Beta, full flow). To choose options, open PowerShell in the folder and run:</p>
+  <table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>run-robot.ps1 -Target beta</code></td><td>Test the Beta website</td></tr>
+    <tr><td><code>run-robot.ps1 -Target local</code></td><td>Test a locally-running copy</td></tr>
+    <tr><td><code>run-robot.ps1 -Target beta -StopAtBank</code></td><td>Quick demo — stops at the bank step</td></tr>
+    <tr><td><code>run-robot.ps1 -Target beta -Headless</code></td><td>Run without a visible browser (report only)</td></tr>
+  </table>
+
+  <h2>Running the full end-to-end test</h2>
+  <p>
+    To go all the way to a decision, the robot injects a real bank statement. For a quick look, use
+    <strong>-StopAtBank</strong> (above) — it needs no setup and stops right after the bank step.
+    For the <strong>full</strong> run, place a real bank-statement file (the Postman request body) at
+    <code>fixtures/bank-statement.json</code> inside the folder. A sample of the expected shape is included
+    as <code>fixtures/bank-statement.sample.json</code>.
+  </p>
+
+  <h2>Good to know</h2>
+  <ul>
+    <li>Every run creates a <strong>real application</strong> on whichever site you pick — that’s intended.</li>
+    <li>A fresh random applicant is used each run, so it never clashes with a previous one.</li>
+    <li>After a run you can open the detailed report: run <code>npx playwright show-report</code> in the folder.</li>
+  </ul>
+
+  <h2>If something doesn’t work</h2>
+  <ul>
+    <li><strong>Nothing happens / can’t download on first run:</strong> a work network may block the setup
+        downloads — try a normal network, or ask IT to allow <code>nodejs.org</code> and npm.</li>
+    <li><strong>It gets stuck on one screen:</strong> the website may have changed — let the team know which
+        screen it stalled on.</li>
+    <li><strong>Windows/antivirus blocks the exe:</strong> use <code>run-robot.bat</code> instead.</li>
+  </ul>
+
+  <div class="footer">
+    Safe Robot — internal testing tool. Share the whole folder (zipped); the setup runs itself on first launch.
+  </div>
+
+</div>
+</body>
+</html>
