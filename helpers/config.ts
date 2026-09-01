@@ -17,7 +17,11 @@ const defaults = {
   },
   local: {
     appBaseUrl: 'http://localhost:4200',
-    statementPostUrl: 'http://localhost:5000/bank-feed/submission-response',
+    // Statement injection is served by the SEPARATE Safe.API service (beta:
+    // safe-api-beta), NOT LBP.OnlineApp on :5000. Safe.API's dev URL is :5151
+    // (see Web/Safe.API/Properties/launchSettings.json). Safe.API must be
+    // running locally for the full flow to reach submit.
+    statementPostUrl: 'http://localhost:5151/bank-feed/submission-response',
     // The Angular dev server uses baseHref "/apply/" and has NO deep-link
     // fallback: GET /apply/mini-loan 404s. Start at the base and let the app's
     // client-side router redirect ('' -> mini-loan) instead of hard-navigating.
