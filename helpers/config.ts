@@ -18,7 +18,10 @@ const defaults = {
   local: {
     appBaseUrl: 'http://localhost:4200',
     statementPostUrl: 'http://localhost:5000/bank-feed/submission-response',
-    startPath: '/mini-loan',
+    // The Angular dev server uses baseHref "/apply/" and has NO deep-link
+    // fallback: GET /apply/mini-loan 404s. Start at the base and let the app's
+    // client-side router redirect ('' -> mini-loan) instead of hard-navigating.
+    startPath: '/apply/',
   },
 }[target];
 
