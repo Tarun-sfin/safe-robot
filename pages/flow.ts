@@ -46,6 +46,7 @@ export class WizardFlow {
       [/\/budget\/expense-bnpl/i, 'BNPL balances'],
       [/\/budget\/expense-credit-cards/i, 'Credit card balances'],
       [/\/budget\/additional-expenses/i, 'Additional expenses'],
+      [/\/loan\/address(?:$|[#/?])/i, 'Residential address'],
       [/\/loan\/living-details/i, 'Address & occupancy'],
       [/\/loan\/discretionary-spending/i, 'Discretionary spending'],
       [/\/loan\/references/i, 'Reference contact'],
@@ -83,6 +84,7 @@ export class WizardFlow {
     if (/\/budget\/expense-list/i.test(u)) return this.reviewList(/^Next$/i, 'app-expense-details');
     if (/\/budget\/expense-(bnpl|credit-cards)/i.test(u)) return this.tapAdvance(/^Next$/i);
     if (/\/budget\/additional-expenses/i.test(u)) return this.reviewOpenForms(/^Next$/i, 'app-expense-details');
+    if (/\/loan\/address(?:$|[#/?])/i.test(u)) return this.residentialAddress();
     if (/\/loan\/living-details/i.test(u)) return this.occupancy();
     if (/\/loan\/discretionary-spending/i.test(u)) return this.discretionary();
     if (/\/loan\/references/i.test(u)) return this.references();
@@ -279,27 +281,43 @@ export class WizardFlow {
    * manual street/state/postcode/suburb fields only if no predictions appear.
    */
   private async fillAddress(): Promise<void> {
-    const addr = this.page.locator('#address').first();
-    if (await addr.isVisible().catch(() => false)) {
+    // New build: custom lookup input #oa-street-search with an .oa-places-list
+    // dropdown (selectPrediction fires on mousedown). Old/iOS build: #address
+    // (Google Places, .pac-container). Support both.
+    const addr = this.page.locator('#oa-street-search, #address').first();
+    const alreadyFilled = (await addr.inputValue().catch(() => '')) !== '';
+    if ((await addr.isVisible().catch(() => false)) && !alreadyFilled) {
       await addr.click().catch(() => undefined);
       await addr.fill('').catch(() => undefined);
-      // Type slowly so Google's autocomplete has time to surface predictions.
+      // Type slowly so the autocomplete has time to surface predictions.
       await addr.pressSequentially('1 Martin Place, Sydney', { delay: 150 }).catch(() => undefined);
 
-      const item = this.page.locator('.pac-container .pac-item').first();
-      const gotList = await item
-        .waitFor({ state: 'visible', timeout: 15000 })
+      const oaItem = this.page.locator('.oa-places-list .oa-places-item').first();
+      const pacItem = this.page.locator('.pac-container .pac-item').first();
+      const gotOa = await oaItem
+        .waitFor({ state: 'visible', timeout: 8000 })
         .then(() => true)
         .catch(() => false);
-      if (gotList) {
-        await this.page.waitForTimeout(400);
-        // Keyboard select is the most reliable with ngx-google-places.
-        await this.page.keyboard.press('ArrowDown').catch(() => undefined);
-        await this.page.keyboard.press('Enter').catch(() => undefined);
-        await this.page.waitForTimeout(1500);
-        console.log('[address] selected a Google prediction.');
+      if (gotOa) {
+        // Click fires mousedown -> selectPrediction before the input's blur.
+        await oaItem.click().catch(() => undefined);
+        await this.page.waitForTimeout(1200);
+        console.log('[address] selected an oa-places prediction.');
       } else {
-        console.log('[address] no predictions appeared — using manual fields.');
+        const gotPac = await pacItem
+          .waitFor({ state: 'visible', timeout: 8000 })
+          .then(() => true)
+          .catch(() => false);
+        if (gotPac) {
+          await this.page.waitForTimeout(400);
+          // Keyboard select is the most reliable with ngx-google-places.
+          await this.page.keyboard.press('ArrowDown').catch(() => undefined);
+          await this.page.keyboard.press('Enter').catch(() => undefined);
+          await this.page.waitForTimeout(1500);
+          console.log('[address] selected a Google prediction.');
+        } else {
+          console.log('[address] no predictions appeared — using manual fields.');
+        }
       }
     }
 
@@ -334,9 +352,38 @@ export class WizardFlow {
     }
   }
 
+  /**
+   * Residential address (/loan/address, ReduceSpending's predecessor). The app
+   * split address entry out of occupancy into its own page: fill the address
+   * lookup, then the Confirm button turns valid and advances to living-details.
+   */
+  private async residentialAddress(): Promise<StepResult> {
+    await this.fillAddress();
+
+    // Confirm goes red (enabled) once isAddressEntryComplete() is true.
+    const confirmReady = async (): Promise<boolean> => {
+      const cls =
+        (await this.page
+          .getByRole('button', { name: /^(Confirm|Next)$/i })
+          .last()
+          .getAttribute('class')
+          .catch(() => '')) || '';
+      return cls.includes('bg-red-500');
+    };
+    for (let i = 0; i < 12 && !(await confirmReady()); i++) {
+      await this.page.waitForTimeout(400);
+    }
+
+    await this.page.getByRole('button', { name: /^(Confirm|Next)$/i }).last().click().catch(() => undefined);
+    await this.page
+      .waitForURL((u) => !/\/loan\/address(?:$|[#/?])/i.test(u.href), { timeout: 8000 })
+      .catch(() => undefined);
+    return 'continue';
+  }
+
   private async occupancy(): Promise<StepResult> {
     // If you filled the address by hand (hand-over), don't overwrite it.
-    const addrVal = await this.page.locator('#address').first().inputValue().catch(() => '');
+    const addrVal = await this.page.locator('#oa-street-search, #address').first().inputValue().catch(() => '');
     if (!addrVal) {
       await this.fillAddress();
     }
@@ -415,30 +462,55 @@ export class WizardFlow {
   }
 
   private async discretionary(): Promise<StepResult> {
-    // Options render under *ngIf="loan" (loaded async), and each is a <label> with
-    // a click handler wrapping a readonly checkbox — so we must click the label and
-    // then confirm a checkbox actually registered as checked. "Next" only advances
-    // when getSelectedOptions().length > 0; otherwise it silently shows an inline
-    // error and stays put (the old handler's infinite loop).
-    const anyOption = this.page.locator('label:has(input[type="checkbox"])');
-    await anyOption.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
-
-    // Pick a concrete, non-"I'm not willing" option (prefer "Dining out").
-    const preferred = this.page.locator('label', { hasText: /dining out/i }).first();
-    const target = (await preferred.isVisible().catch(() => false))
-      ? preferred
-      : this.page.locator('label', { hasText: /gambling|bnpl|subscriptions|online retail/i }).first();
+    // Discretionary spending is a set of tick boxes. "Next" only advances once at
+    // least one is selected. Beta's markup can differ from the local source, so we
+    // try several ways to tick a box and verify it actually registered.
+    const checkboxes = this.page.locator('input[type="checkbox"]');
+    await checkboxes.first().waitFor({ state: 'attached', timeout: 10_000 }).catch(() => undefined);
 
     const checkedCount = () =>
       this.page.locator('input[type="checkbox"]:checked').count().catch(() => 0);
 
-    for (let i = 0; i < 4 && (await checkedCount()) === 0; i++) {
-      await target.click().catch(() => undefined);
-      await this.page.waitForTimeout(300);
+    // Prefer a concrete, non-"I'm not willing" option label.
+    const optionLabel = this.page
+      .locator('label', { hasText: /dining out|gambling|bnpl|subscriptions|online retail|dining|entertainment/i })
+      .first();
+
+    const tryTick = async (): Promise<void> => {
+      if (await optionLabel.isVisible().catch(() => false)) {
+        await optionLabel.click().catch(() => undefined);
+        if ((await checkedCount()) > 0) return;
+      }
+      // Click the checkbox itself (some builds don't wire the label click).
+      const cb = checkboxes.first();
+      if (await cb.isVisible().catch(() => false)) {
+        await cb.click({ force: true }).catch(() => undefined);
+        if ((await checkedCount()) > 0) return;
+      }
+      // Click the checkbox's parent (label/row) as a last resort.
+      await cb.locator('xpath=..').click({ force: true }).catch(() => undefined);
+    };
+
+    for (let i = 0; i < 5 && (await checkedCount()) === 0; i++) {
+      await tryTick();
+      await this.page.waitForTimeout(350);
     }
 
-    // Explicitly click Next (not the generic primary) and confirm we leave the page.
-    await this.page.getByRole('button', { name: /^Next$/i }).first().click().catch(() => undefined);
+    if ((await checkedCount()) === 0) {
+      // One-time diagnostic dump so we can see beta's actual markup.
+      const cbCount = await checkboxes.count().catch(() => 0);
+      const lbls = (await this.page.locator('label').allInnerTexts().catch(() => []))
+        .map((t) => t.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .slice(0, 12);
+      console.log(`[discretionary] NOT ticked. checkboxes=${cbCount} labels=${JSON.stringify(lbls)}`);
+      const html = await this.page.locator('.sm-container, form').first().innerHTML().catch(() => '');
+      console.log(`[discretionary] container HTML: ${html.replace(/\s+/g, ' ').slice(0, 1800)}`);
+    } else {
+      console.log('[discretionary] a tick box is selected; advancing.');
+    }
+
+    await this.page.getByRole('button', { name: /^(Next|Confirm)$/i }).first().click().catch(() => undefined);
     await this.page
       .waitForURL((u) => !/\/loan\/discretionary-spending/i.test(u.href), { timeout: 8_000 })
       .catch(() => undefined);
@@ -463,8 +535,11 @@ export class WizardFlow {
   }
 
   private async submit(): Promise<StepResult> {
-    await expect(this.page.getByRole('button', { name: /^Submit$/i })).toBeVisible({ timeout: 30_000 });
-    await this.w.clickButton(/^Submit$/i);
+    // Scope to the real page button: the injected HUD tracker also has a "Submit"
+    // stage button, which otherwise makes getByRole(/^Submit$/) ambiguous.
+    const btn = this.page.locator('app-submit-app').getByRole('button', { name: /^Submit$/i }).first();
+    await expect(btn).toBeVisible({ timeout: 30_000 });
+    await btn.click().catch(() => undefined);
     return 'submitted';
   }
 }
