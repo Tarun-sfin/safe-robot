@@ -30,6 +30,23 @@ contains everything:
 
 ## Progress so far
 
+- [x] **BETA FULL E2E VERIFIED (2026-09-01)** — a clean run reaches
+  `/loan/success` and triggers the AI email (`1 passed`, ~2.8m). Chain:
+  Landing → bank inject → income/expenses → Residential address → occupancy →
+  Discretionary → References → Submit → Awaiting outcome → **SUCCESS**.
+- [x] **New `/loan/address` page handled** — beta split residential address into
+  its own page (`ResidentialAddressComponent`) using a custom `#oa-street-search`
+  lookup with an `.oa-places-list` dropdown (not the old Google `#address`).
+  Added `residentialAddress()` + upgraded `fillAddress()` to support both.
+- [x] **Discretionary tick-box** — options are checkboxes; `discretionary()` now
+  tries multiple ways to tick one (label click, force-click the box, click its
+  row) and verifies `:checked` before Next.
+- [x] **Submit selector scoped** to `app-submit-app` (the HUD tracker also has a
+  "Submit" button → was an ambiguous-locator failure).
+- [!] **HUD gate flakiness**: with `SHOW_HUD=1`, `gate()` occasionally freezes
+  (`[hud] paused at "…" — waiting for Resume`) because `handoverAt` gets set
+  intermittently. For unattended runs use **`SHOW_HUD=0`**. For demos, click
+  Resume in the tracker if it pauses.
 - [x] **Occupancy stage fixed** (`/loan/living-details`). Was infinite-looping
   with `[occupancy] errors=["Back"]`. Fixed handler in `pages/flow.ts`
   (`occupancy()`) — dynamic-flow loop that answers every tile-group, fills
@@ -40,12 +57,10 @@ contains everything:
   (`[stage] Discretionary spending` x60, never advanced). See root cause below.
   Fix applied to `discretionary()` in `pages/flow.ts`. **Verification run was
   in progress when these notes were written** (see "Where we stopped").
-- [ ] Verify a full headed run reaches `/loan/success`.
-- [ ] Sync fixed source `playwright-tests` → `safe-robot`.
-- [ ] Rebuild `SafeRobot.exe` (`build-exe.ps1`) in `safe-robot`.
-- [ ] Create a new GitHub remote for `safe-robot` and push.
-- [ ] Clean up redundant `Run-Beta-Test.exe` + `run-beta-test.ps1` created in
-  `playwright-tests` (superseded by safe-robot's launchers).
+- [x] Verify a full headed run reaches `/loan/success`. (done 2026-09-01)
+- [x] Sync fixed source into `safe-robot` (dev copy deleted).
+- [x] Rebuild `SafeRobot.exe` (`build-exe.ps1`) in `safe-robot`.
+- [ ] **Create a new GitHub remote for `safe-robot` and push** (still local-only).
 
 ## Discretionary spending — root cause & fix (reference)
 
