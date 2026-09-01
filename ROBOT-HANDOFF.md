@@ -69,7 +69,7 @@ Flow after this stage: `discretionary-spending → references → submit → suc
 first/last/**mobile** (has `invalidMobile` validator; test-data generates
 `04` + 8 digits, which is valid). `submit` page has a single **Submit** button.
 
-## How to run (from `playwright-tests`)
+## How to run (from `safe-robot`)
 
 ```powershell
 $env:TARGET="beta"; $env:STOP_AT_BANK="0"; $env:SHOW_HUD="1"; $env:CONTINUE_TO_SUBMIT="1"; $env:PAUSE_AT_BANK="0"; $env:HANDOVER_AT=""; npx playwright test --headed 2>&1
@@ -77,6 +77,30 @@ $env:TARGET="beta"; $env:STOP_AT_BANK="0"; $env:SHOW_HUD="1"; $env:CONTINUE_TO_S
 
 Run takes ~4 min headed. Watch the `[stage]` lines; a stage repeating = that
 handler needs a selector tweak. Success prints `SUCCESS` / lands on `/loan/success`.
+
+## Local target (`TARGET=local`) — requirements & gotchas
+
+Fixed in `helpers/config.ts` (2026-09-01):
+- **Start path** is `/apply/` (NOT `/mini-loan`). The Angular dev server uses
+  `baseHref "/apply/"` and has **no deep-link fallback** — `GET /apply/mini-loan`
+  hard-404s. Starting at `/apply/` lets the app's router redirect `'' -> mini-loan`.
+- **Statement URL** is `http://localhost:5151/bank-feed/submission-response`
+  (Safe.API), NOT `:5000` (that's LBP.OnlineApp and 404s the route).
+
+**To run the FULL local flow to submit, three services must be up:**
+1. Angular dev server on `:4200` (serves `/apply/`).
+2. `LBP.OnlineApp` on `:5000` (polls `check-new-statement`).
+3. **`Safe.API` on `:5151`** — receives the injected statement. ⚠️ This one is
+   usually NOT running and has never been built locally. It **cannot** be built
+   with the `dotnet` CLI (legacy `CodeTaskFactory` build tasks in
+   `Core/.nuget/nuget.targets` via `LBP.Util.csproj`). Build/run it from
+   **Visual Studio** (full MSBuild is at
+   `C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe`),
+   and it must share the same local DB that `LBP.OnlineApp` polls.
+
+**Status:** local front-half (Landing → Bank step) VERIFIED working. Full local
+to submit is blocked only by Safe.API not running — a backend/env task, not a
+robot bug. Beta full-flow is the reliable end-to-end path.
 
 ## Key files
 
