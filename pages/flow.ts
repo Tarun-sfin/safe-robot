@@ -676,6 +676,33 @@ export class WizardFlow {
       await cb.locator('xpath=..').click({ force: true }).catch(() => undefined);
     };
 
+    // DISCRETIONARY_ANSWER=stop ticks every spending option (agrees to stop all of them);
+    // DISCRETIONARY_ANSWER=continue picks "I'm not willing". Unset keeps the default single tick.
+    // Click the box, not the label: the label's (click) handler fires again for the click it
+    // forwards to the box, so a label click toggles twice and leaves the option unticked.
+    const answer = (process.env.DISCRETIONARY_ANSWER || '').trim().toLowerCase();
+    await this.page.locator('label', { hasText: /not willing/i }).first()
+      .waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
+    if (answer === 'continue') {
+      const box = this.page.locator('label', { hasText: /not willing/i }).first().locator('input[type="checkbox"]');
+      for (let i = 0; i < 4 && (await checkedCount()) === 0; i++) {
+        await box.click({ force: true }).catch(() => undefined);
+        await this.page.waitForTimeout(350);
+      }
+      console.log(`[discretionary] continue: not-willing ticked=${await box.isChecked().catch(() => false)}`);
+    } else if (answer === 'stop') {
+      const options = this.page.locator('label', { hasText: /dining|gambling|bnpl|buy now|subscriptions|online retail/i });
+      const n = await options.count().catch(() => 0);
+      for (let i = 0; i < n; i++) {
+        const box = options.nth(i).locator('input[type="checkbox"]');
+        for (let tries = 0; tries < 3 && !(await box.isChecked().catch(() => false)); tries++) {
+          await box.click({ force: true }).catch(() => undefined);
+          await this.page.waitForTimeout(250);
+        }
+      }
+      console.log(`[discretionary] stop: ticked ${await checkedCount()} of ${n} options`);
+    }
+
     for (let i = 0; i < 5 && (await checkedCount()) === 0; i++) {
       await tryTick();
       await this.page.waitForTimeout(350);
