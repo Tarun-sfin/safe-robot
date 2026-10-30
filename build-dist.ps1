@@ -1,5 +1,5 @@
 <#
-  Build-SafeRobot-Zip — packages the tester into a single shareable ZIP.
+  Build-SafeRobot-Zip - packages the tester into a single shareable ZIP.
 
   Double-click Build-SafeRobot-Zip.exe (or run this script). It:
     1. makes sure SafeRobot.exe exists (builds it if missing),
@@ -7,7 +7,7 @@
     3. copies only the files a recipient needs (source + launchers + exe + PDF),
        deliberately EXCLUDING secrets (.env, real bank statement), node_modules,
        and the builder's own files,
-    4. zips it to SafeRobot-dist.zip — that single file is what you send.
+    4. zips it to SafeRobot-dist.zip - that single file is what you send.
 #>
 $ErrorActionPreference = 'Stop'
 
@@ -26,12 +26,14 @@ Write-Host "  Safe Robot - distributable builder" -ForegroundColor White
 Write-Host "  Folder: $root" -ForegroundColor DarkGray
 Write-Host ""
 
-# --- 1. Ensure SafeRobot.exe exists -----------------------------------------
-if (-not (Test-Path (Join-Path $root 'SafeRobot.exe'))) {
-  Say "SafeRobot.exe missing - building it..."
-  powershell -ExecutionPolicy Bypass -File (Join-Path $root 'build-exe.ps1')
+# --- 1. Build SafeRobot.exe from the current script -------------------------
+Say "Building SafeRobot.exe..."
+powershell -ExecutionPolicy Bypass -File (Join-Path $root 'build-exe.ps1')
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $root 'SafeRobot.exe'))) {
+  Warn "SafeRobot.exe was not built."
+  exit 1
 }
-if (Test-Path (Join-Path $root 'SafeRobot.exe')) { Ok "SafeRobot.exe present." }
+Ok "SafeRobot.exe present."
 
 # --- 2. Ensure deps + browser (needed to render the PDF) --------------------
 if (-not (Test-Path (Join-Path $root 'node_modules\@playwright\test'))) {

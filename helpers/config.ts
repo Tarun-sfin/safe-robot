@@ -38,9 +38,15 @@ export const config = {
   statementFile: path.resolve(
     __dirname,
     '..',
-    process.env.STATEMENT_FILE ?? 'fixtures/bank-statement.json',
+    process.env.STATEMENT_FILE || 'fixtures/bank-statement.json',
   ),
   startPath: process.env.START_PATH || defaults.startPath,
+  /** Blank the statement's reportsLink before posting (set for statements replayed from live). */
+  blankReportsLink: bool('BLANK_REPORTS_LINK', false),
+  /** Folder for this run's result.json; '' = runs/latest. */
+  runDir: path.resolve(__dirname, '..', process.env.RUN_DIR || 'runs/latest'),
+  /** Live contract the statement was copied from, recorded in result.json. */
+  sourceContract: process.env.SOURCE_CONTRACT ?? '',
   pauseAtBank: bool('PAUSE_AT_BANK', false),
   continueToSubmit: bool('CONTINUE_TO_SUBMIT', true),
   /** Stop cleanly once the bank step + verification code are reached (no inject). */

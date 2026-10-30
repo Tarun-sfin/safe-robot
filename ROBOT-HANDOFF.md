@@ -1,6 +1,6 @@
 # Safe Robot — Work Handoff / Resume Notes
 
-_Last updated: 2026-08-27. Purpose: capture full context so we can resume without re-discovery._
+_Last updated: 2026-09-16. Purpose: capture full context so we can resume without re-discovery._
 
 ## The goal (what we're building)
 
@@ -19,7 +19,7 @@ As of 2026-08-31 we **consolidated to one copy**. The old duplicate dev copy at
 `OnlineAppsV2\playwright-tests\` has been **deleted**. From now on, **edit here**
 (`safe-robot`) — it's both the source you run and the source the exe uses.
 
-This repo (standalone git repo, branch `main`, **NO remote yet → never pushed**)
+This repo (standalone git repo, branch `main`)
 contains everything:
 - `pages/`, `helpers/`, `tests/` — the robot logic (now includes the occupancy +
   discretionary fixes, synced from the old dev copy)
@@ -60,7 +60,18 @@ contains everything:
 - [x] Verify a full headed run reaches `/loan/success`. (done 2026-09-01)
 - [x] Sync fixed source into `safe-robot` (dev copy deleted).
 - [x] Rebuild `SafeRobot.exe` (`build-exe.ps1`) in `safe-robot`.
-- [ ] **Create a new GitHub remote for `safe-robot` and push** (still local-only).
+- [x] GitHub remote exists (`Tarun-sfin/safe-robot`).
+
+## Wizard updates (2026-09-16)
+
+Robot handlers were aligned with the post–Sep 1 OnlineApps wizard:
+
+- Consent copy is now **"I agree and consent"** on mini-loan/CC (was "acknowledge").
+- Benefit review lives at **`/budget/benefit-review`** and each card must be confirmed.
+- New income pages: **`/budget/no-income`**, **`/budget/employment-income`**.
+- Additional expenses is a **amount + frequency table** with **Continue** (not `app-expense-details`).
+- BNPL / credit-card pages require per-creditor Confirm, then **Save And Continue**.
+- Optional **`/loan/loan-security`**, **`/loan/previous-address`**, **`/loan/postal-address`**.
 
 ## Discretionary spending — root cause & fix (reference)
 
@@ -154,16 +165,12 @@ command below; if it pauses at Start again, click Resume in the browser (or dig
 into `helpers/hud.ts` gate/startPaused logic).**
 
 ### Resume checklist (next session)
-1. Re-run the headed command (from `safe-robot`) and confirm it advances past
-   `Discretionary spending` → `references` → `submit` → `/loan/success`.
-   (Discretionary fix is committed but **not yet verified end-to-end**.)
+1. Re-run the headed command (from `safe-robot`) and confirm a full beta run still
+   reaches `/loan/success` with the 2026-09-16 handlers (benefit-review, general
+   expenses table, BNPL/CC confirm, consent wording).
 2. If it pauses at "Start", click Resume in the browser (intermittent HUD gate).
 3. Rebuild the exe only if you changed the launcher:
    `powershell -ExecutionPolicy Bypass -File build-exe.ps1`.
-4. **Still TODO: create a GitHub repo + push** (`git remote add origin …; git push -u origin main`).
-5. To share: package the folder (exe included, secrets excluded) — see "How to
-   send it" notes; ship the demo/stop-at-bank flavor unless a real statement is
-   provided.
 
 ### Done on 2026-08-31
 - Synced all source into `safe-robot`, rebuilt `SafeRobot.exe`, committed.

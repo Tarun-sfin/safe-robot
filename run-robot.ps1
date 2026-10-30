@@ -10,12 +10,30 @@
     run-robot.ps1 -Target beta
     run-robot.ps1 -Target local
     run-robot.ps1 -Target beta -StopAtBank   # stop at the bank step (quick demo)
+
+  Replay a real statement and check the result in the UAT databases:
+    run-robot.ps1 -Target beta -Contract 2226000 -Headless -NoPrompt
+    run-robot.ps1 -Target beta -Contract 2224674 -Source uat
+    run-robot.ps1 -Target beta -StatementFile C:\path\statement.json
+
+  Each run gets runs\<time>[-c<contract>]\ with statement.json, result.json, check.md, check.json.
 #>
 param(
   [ValidateSet('beta', 'local', '')]
   [string]$Target = '',
   [switch]$StopAtBank,
-  [switch]$Headless
+  [switch]$Headless,
+  # Albert contract whose bank statement is replayed (downloaded from -Source).
+  [long]$Contract = 0,
+  [ValidateSet('live', 'uat')]
+  [string]$Source = 'live',
+  # Statement JSON to post instead of fixtures\bank-statement.json.
+  [string]$StatementFile = '',
+  # Skip the LBPUAT / AlbertUAT check after the run.
+  [switch]$NoCheck,
+  [int]$WaitMinutes = 8,
+  # Do not wait for Enter at the end (for unattended or agent runs).
+  [switch]$NoPrompt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +63,7 @@ Write-Ok "Target: $Target"
 function Test-Node { try { node -v *> $null; return $LASTEXITCODE -eq 0 } catch { return $false } }
 
 if (-not (Test-Node)) {
-  Write-Head "Node.js not found — installing a private copy (first run only)…"
+  Write-Head "Node.js not found - installing a private copy (first run only)..."
   $nodeVersion = 'v20.17.0'
   $nodeDir = Join-Path $root ".runtime\node-$nodeVersion-win-x64"
   if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) {
@@ -54,7 +72,7 @@ if (-not (Test-Node)) {
     $url = "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip"
     Write-Info "Downloading $url"
     Invoke-WebRequest -Uri $url -OutFile $zip
-    Write-Info "Extracting…"
+    Write-Info "Extracting..."
     Expand-Archive -Path $zip -DestinationPath (Join-Path $root '.runtime') -Force
     Remove-Item $zip -Force
   }
@@ -71,19 +89,43 @@ $env:NODE_NO_WARNINGS = '1'
 $env:FORCE_COLOR = ''
 
 if (-not (Test-Path (Join-Path $root 'node_modules\@playwright\test'))) {
-  Write-Head "Installing test dependencies (first run only)…"
+  Write-Head "Installing test dependencies (first run only)..."
   if (Test-Path (Join-Path $root 'package-lock.json')) { npm ci } else { npm install }
 }
-Write-Info "Ensuring Chromium is installed…"
+Write-Info "Ensuring Chromium is installed..."
 npx playwright install chromium 2>$null | Out-Null
 Write-Ok "Dependencies ready."
 
-# --- 4. Run ------------------------------------------------------------------
+# --- 4. Statement + run folder ------------------------------------------------
+$runName = (Get-Date -Format 'yyyyMMdd-HHmmss') + $(if ($Contract) { "-c$Contract" } else { '' })
+$runDir = Join-Path $root "runs\$runName"
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+$env:RUN_DIR = $runDir
+$env:SOURCE_CONTRACT = if ($Contract) { "$Contract" } else { '' }
+$env:BLANK_REPORTS_LINK = '0'
+
+if ($Contract) {
+  Write-Head "Fetching the bank statement for contract $Contract ($Source)..."
+  $statementOut = Join-Path $runDir 'statement.json'
+  $info = & (Join-Path $root 'tools\fetch-statement.ps1') -Contract $Contract -Source $Source -OutFile $statementOut | ConvertFrom-Json
+  Write-Ok "Bank response $($info.bankResponseId): $($info.accounts) account(s), $($info.transactions) transaction(s)"
+  $env:STATEMENT_FILE = $statementOut
+  $env:BLANK_REPORTS_LINK = '1'
+} elseif ($StatementFile) {
+  if (-not (Test-Path $StatementFile)) { throw "Statement file not found: $StatementFile" }
+  $env:STATEMENT_FILE = (Resolve-Path $StatementFile).Path
+  $env:BLANK_REPORTS_LINK = '1'
+} else {
+  $env:STATEMENT_FILE = ''
+}
+Write-Info "Run folder: $runDir"
+
+# --- 5. Run ------------------------------------------------------------------
 $env:TARGET = $Target
-$env:SHOW_HUD = '1'
+$env:SHOW_HUD = if ($Headless) { '0' } else { '1' }
 if ($StopAtBank) { $env:STOP_AT_BANK = '1' } else { $env:STOP_AT_BANK = '0' }
 
-Write-Head "Launching the robot ($Target)…"
+Write-Head "Launching the robot ($Target)..."
 if ($Headless) {
   npx playwright test
 } else {
@@ -97,6 +139,18 @@ if ($code -eq 0) {
 } else {
   Write-Host "    Run ended with issues (exit $code). Trace/video saved under test-results\." -ForegroundColor Yellow
 }
+
+# --- 6. Check what landed in LBPUAT / AlbertUAT -------------------------------
+$resultFile = Join-Path $runDir 'result.json'
+if (Test-Path $resultFile) {
+  $result = Get-Content $resultFile -Raw | ConvertFrom-Json
+  Write-Head "Result: $($result.outcome)  |  Albert contract: $(if ($result.albertContractId) { $result.albertContractId } else { 'none' })"
+  if (-not $NoCheck -and $Target -eq 'beta' -and ($result.coreSlug -or $result.verificationCode)) {
+    Write-Head "Checking LBPUAT and AlbertUAT (waits up to $WaitMinutes min for Nexus and Adam)..."
+    & (Join-Path $root 'tools\check-run.ps1') -RunDir $runDir -WaitMinutes $WaitMinutes
+  }
+}
+Write-Info "Run folder: $runDir"
 Write-Host ""
-Read-Host "  Press Enter to close"
+if (-not $NoPrompt) { Read-Host "  Press Enter to close" }
 exit $code

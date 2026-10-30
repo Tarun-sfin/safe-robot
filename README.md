@@ -13,6 +13,7 @@ submit — which is what triggers the **AI-assessment HTML email**.
   drives the wizard. Share it by zipping this whole folder.
 - **`run-robot.bat`** — same thing without the exe (needs the folder present).
 - Rebuild the exe after code changes: `powershell -ExecutionPolicy Bypass -File build-exe.ps1`
+  (signs automatically if a code-signing cert is in your store, or if `SIGN_THUMBPRINT` / `SIGN_PFX` is set)
 
 Command-line options (exe or `run-robot.ps1`):
 
@@ -22,6 +23,23 @@ run-robot.ps1 -Target local           # test localhost
 run-robot.ps1 -Target beta -StopAtBank  # quick demo: stop at the bank step
 run-robot.ps1 -Target beta -Headless    # no visible browser (report only)
 ```
+
+## Replay a real statement and check the databases
+
+```powershell
+run-robot.ps1 -Target beta -Contract 2226000 -Headless -NoPrompt   # live contract's statement
+run-robot.ps1 -Target beta -Contract 2224674 -Source uat            # UAT contract's statement
+run-robot.ps1 -Target beta -StatementFile C:\path\statement.json    # any statement JSON
+tools\check-run.ps1 -RunDir runs\<folder>                           # re-check an earlier run
+```
+
+- `-Contract` downloads the contract's latest good bank response (read-only, through
+  `%USERPROFILE%\.safe-db\query.ps1`), sets `customer.reference`, and blanks `reportsLink`.
+- After submit, `tools\check-run.ps1` reads LBPUAT and AlbertUAT: Albert contract, bank response,
+  Nexus run, Adam submission, every budget row, and flags such as repeat Groceries or Dining Out
+  rows. It waits up to `-WaitMinutes` (default 8) for Nexus and Adam.
+- Each run writes `runs\<time>[-c<contract>]\` with `statement.json`, `result.json`, `check.md`
+  and `check.json`. `runs/` is git-ignored: it holds customer statements.
 
 ## The on-screen tracker
 

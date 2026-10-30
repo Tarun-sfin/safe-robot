@@ -6,6 +6,7 @@ import { Hud } from '../helpers/hud';
 import { STAGES, stageIndexForUrl } from '../helpers/stages';
 import { WizardHelpers } from '../pages/wizard.helpers';
 import { WizardFlow } from '../pages/flow';
+import { ResultRecorder } from '../helpers/result';
 
 /**
  * Beta / localhost desk-case robot.
@@ -24,9 +25,21 @@ test.describe('Online Apps — desk-case robot', () => {
     const bar = hud(page);
     const flow = new WizardFlow(page, bar, applicant);
     const wizard = new WizardHelpers(page);
+    const rec = new ResultRecorder();
+    rec.update({ applicant: { name: `${applicant.firstName} ${applicant.lastName}`, email: applicant.email } });
+    rec.watch(page);
 
     console.log(`Target: ${config.target}  |  ${config.appBaseUrl}`);
     console.log(`Applicant: ${applicant.firstName} ${applicant.lastName} <${applicant.email}>`);
+    try {
+      await drive();
+    } catch (e) {
+      rec.finish('error', page.url(), String(e));
+      throw e;
+    }
+    if (rec.result.outcome === 'running') rec.finish('stuck', page.url());
+
+    async function drive() {
 
     await bar.install();
 
@@ -55,6 +68,14 @@ test.describe('Online Apps — desk-case robot', () => {
         const txt = await r.text().catch(() => '');
         console.log(`[poll] check-new-statement ${r.status()} → ${txt.slice(0, 160)}`);
       }
+      if (r.url().includes('/bank/get-budget-list')) {
+        const body = await r.json().catch(() => null);
+        const p = body?.payload ?? {};
+        console.log(
+          `[budget] discretionaryIdentified=${JSON.stringify(p.discretionaryIdentified)} ` +
+            `discretionaryCaptured=${JSON.stringify(p.discretionaryCaptured)}`,
+        );
+      }
     });
 
     // --- Drive to the bank step -------------------------------------------------
@@ -65,6 +86,7 @@ test.describe('Online Apps — desk-case robot', () => {
       await bar.gate(idx); // Click a stage in the tracker to freeze here.
 
       console.log(`[stage] ${flow.label()}`);
+      rec.result.lastStage = flow.label();
       const result = await flow.step();
 
       if (result === 'bank') {
@@ -73,6 +95,7 @@ test.describe('Online Apps — desk-case robot', () => {
       }
       if (result === 'done' || result === 'rejected') {
         await bar.finish(result === 'done');
+        rec.finish(result === 'done' ? 'success' : 'declined', page.url());
         return;
       }
       await page.waitForTimeout(1200);
@@ -81,6 +104,7 @@ test.describe('Online Apps — desk-case robot', () => {
     if (!reachedBank) {
       await bar.banner('Did not reach the bank step — see console');
       console.log('Current URL:', page.url());
+      rec.finish('stuck', page.url(), 'Did not reach the bank step');
       test.skip(true, 'Wizard did not reach the bank step; a selector likely needs updating for this build.');
       return;
     }
@@ -91,6 +115,7 @@ test.describe('Online Apps — desk-case robot', () => {
       console.log('No verification code captured (bank step differs on this target).');
     } else {
       console.log(`Verification code: ${verificationCode}`);
+      rec.update({ verificationCode });
       console.log(`Body reference will be: ${config.bankReferencePrefix}-${verificationCode}`);
     }
 
@@ -122,10 +147,10 @@ test.describe('Online Apps — desk-case robot', () => {
 
       // The app itself navigates to confirm-accounts once the statement lands.
       await page
-        .waitForURL(/\/budget\/(confirm-accounts|income-accounts)/i, { timeout: 6 * 60_000 })
+        .waitForURL(/\/budget\/(confirm-accounts|income-accounts|no-income)/i, { timeout: 6 * 60_000 })
         .catch(() => undefined);
 
-      if (/\/budget\/(confirm-accounts|income-accounts)/i.test(page.url())) {
+      if (/\/budget\/(confirm-accounts|income-accounts|no-income)/i.test(page.url())) {
         await bar.banner('Statement received — continuing.');
       } else {
         await bar.banner('Statement not picked up — see [poll] logs.');
@@ -136,18 +161,22 @@ test.describe('Online Apps — desk-case robot', () => {
     // --- Continue through budget → submit (triggers AI mail on success) --------
     if (config.continueToSubmit) {
       for (let i = 0; i < 70; i++) {
-        if (/\/loan\/(success|reject)/i.test(page.url())) break;
+        if (/\/loan\/(success|reject)/i.test(page.url()) || /\/budget\/failed-statement/i.test(page.url())) break;
         const idx = stageIndexForUrl(page.url());
         await bar.setStage(idx);
         await bar.gate(idx);
 
         console.log(`[stage] ${flow.label()}`);
+        rec.result.lastStage = flow.label();
         const result = await flow.step();
         if (result === 'done' || result === 'rejected') break;
         await page.waitForTimeout(1500);
       }
 
       if (/\/loan\/success/i.test(page.url())) {
+        // The app's /loan/outcome poll is what starts Adam and Nexus; give its listener a moment.
+        await page.waitForTimeout(3000);
+        rec.finish('success', page.url());
         await bar.finish(true);
         await bar.banner('SUCCESS — AI assessment email should now send.');
         console.log(
@@ -156,12 +185,18 @@ test.describe('Online Apps — desk-case robot', () => {
         );
         await expect(page).toHaveURL(/\/loan\/success/i, { timeout: 5_000 });
       } else if (/\/loan\/reject/i.test(page.url())) {
+        rec.finish('declined', page.url());
         await bar.finish(false);
         await bar.banner('Application declined.');
+      } else if (/\/budget\/failed-statement/i.test(page.url())) {
+        rec.finish('statement-failed', page.url());
+        await bar.banner('Statement failed to process.');
       } else {
+        rec.finish('stuck', page.url());
         await bar.banner('Did not reach success — see console.');
         console.log('Final URL:', page.url());
       }
+    }
     }
   });
 });

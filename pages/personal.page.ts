@@ -41,8 +41,11 @@ export class PersonalPage {
     await this.page.locator('#email').blur().catch(() => undefined);
 
     // Tick the required consent (wrapper handles the click; input is opacity-0).
-    // Idempotent: accept() toggles, so only click when not already checked.
-    const consent = this.page.locator('.cursor-pointer', { hasText: /acknowledge/i }).first();
+    // Mini-loan / CC copy is "I agree and consent"; DA/brokered still say "acknowledge".
+    const consent = this.page
+      .locator('.cursor-pointer')
+      .filter({ hasText: /agree and consent|acknowledge|I consent/i })
+      .first();
     if (await consent.count()) {
       const box = consent.locator('input[type="checkbox"]').first();
       const checked = (await box.count()) ? await box.isChecked().catch(() => false) : false;

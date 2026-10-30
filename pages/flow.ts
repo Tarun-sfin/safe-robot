@@ -40,15 +40,22 @@ export class WizardFlow {
       [/\/budget\/loading-statement/i, 'Processing statement'],
       [/\/budget\/confirm-accounts/i, 'Confirm bank accounts'],
       [/\/budget\/income-accounts/i, 'Review income'],
+      [/\/budget\/benefit-review/i, 'Benefit review'],
       [/\/loan\/benefit-review/i, 'Benefit review'],
+      [/\/budget\/no-income/i, 'No statement income'],
+      [/\/budget\/employment-income/i, 'Employment income'],
       [/\/budget\/additional-income/i, 'Additional income'],
       [/\/budget\/expense-list/i, 'Review expenses'],
       [/\/budget\/expense-bnpl/i, 'BNPL balances'],
       [/\/budget\/expense-credit-cards/i, 'Credit card balances'],
       [/\/budget\/additional-expenses/i, 'Additional expenses'],
+      [/\/budget\/failed-statement/i, 'Statement failed'],
       [/\/loan\/address(?:$|[#/?])/i, 'Residential address'],
-      [/\/loan\/living-details/i, 'Address & occupancy'],
+      [/\/loan\/previous-address/i, 'Previous address'],
+      [/\/loan\/postal-address/i, 'Postal address'],
+      [/\/loan\/living-details/i, 'Occupancy'],
       [/\/loan\/discretionary-spending/i, 'Discretionary spending'],
+      [/\/loan\/loan-security/i, 'Loan security'],
       [/\/loan\/references/i, 'Reference contact'],
       [/\/loan\/submit/i, 'Submit application'],
       [/\/loan\/loading-outcome/i, 'Awaiting outcome'],
@@ -66,7 +73,7 @@ export class WizardFlow {
 
     if (/\/budget\/start/i.test(u)) return 'bank';
     if (/\/loan\/success/i.test(u)) return 'done';
-    if (/\/loan\/reject/i.test(u)) return 'rejected';
+    if (/\/loan\/reject/i.test(u) || /\/budget\/failed-statement/i.test(u)) return 'rejected';
 
     if (/mini-loan/i.test(u)) return this.landing();
     if (/\/loan\/eligible/i.test(u)) return this.tapAdvance(/^Get started$/i);
@@ -79,14 +86,18 @@ export class WizardFlow {
     if (/\/budget\/loading-statement/i.test(u)) return this.waitScreen();
     if (/\/budget\/confirm-accounts/i.test(u)) return this.tapAdvance(/^Next$/i);
     if (/\/budget\/income-accounts/i.test(u)) return this.reviewList(/^Confirm$/i, 'app-income-details');
-    if (/\/loan\/benefit-review/i.test(u)) return this.tapAdvance(/^Save And Continue$/i);
+    if (/\/budget\/benefit-review/i.test(u) || /\/loan\/benefit-review/i.test(u)) return this.benefitReview();
+    if (/\/budget\/no-income/i.test(u)) return this.noIncome();
+    if (/\/budget\/employment-income/i.test(u)) return this.employmentIncome();
     if (/\/budget\/additional-income/i.test(u)) return this.reviewOpenForms(/^Next$/i, 'app-income-details');
     if (/\/budget\/expense-list/i.test(u)) return this.reviewList(/^Next$/i, 'app-expense-details');
-    if (/\/budget\/expense-(bnpl|credit-cards)/i.test(u)) return this.tapAdvance(/^Next$/i);
-    if (/\/budget\/additional-expenses/i.test(u)) return this.reviewOpenForms(/^Next$/i, 'app-expense-details');
+    if (/\/budget\/expense-(bnpl|credit-cards)/i.test(u)) return this.creditorBalances();
+    if (/\/budget\/additional-expenses/i.test(u)) return this.generalExpenses();
     if (/\/loan\/address(?:$|[#/?])/i.test(u)) return this.residentialAddress();
+    if (/\/loan\/(previous-address|postal-address)/i.test(u)) return this.extraAddress();
     if (/\/loan\/living-details/i.test(u)) return this.occupancy();
     if (/\/loan\/discretionary-spending/i.test(u)) return this.discretionary();
+    if (/\/loan\/loan-security/i.test(u)) return this.loanSecurity();
     if (/\/loan\/references/i.test(u)) return this.references();
     if (/\/loan\/submit/i.test(u)) return this.submit();
     if (/\/loan\/loading-outcome/i.test(u)) return this.waitScreen();
@@ -242,11 +253,15 @@ export class WizardFlow {
    */
   private async confirmOpenDetail(root: Locator): Promise<boolean> {
     await this.clickTileUnder(root, /type of expense/i);
+    await this.clickTileUnder(root, /type of income/i);
+    await this.page.waitForTimeout(400);
     await this.clickTileUnder(root, /Type of wage/i);
 
-    const bus = root.locator('#busname').first();
-    if (await bus.isVisible().catch(() => false)) {
-      await bus.fill('Employer Pty Ltd').catch(() => undefined);
+    for (const sel of ['#busname', '#empname']) {
+      const name = root.locator(sel).first();
+      if (await name.isVisible().catch(() => false)) {
+        await name.fill('Employer Pty Ltd').catch(() => undefined);
+      }
     }
     await this.typeMoney(root, '#abn', '51824753556');
     await this.typeMoney(root, '#ammend', '200');
@@ -257,13 +272,13 @@ export class WizardFlow {
     await this.clickTileUnder(root, /purpose of this loan/i);
     await this.typeMoney(root, '#balance', '5000');
 
-    for (const sel of ['#month', '#year']) {
+    for (const sel of ['#month', '#year', '#lastPayDay', '#lastPayMonth']) {
       const dd = root.locator(sel).first();
       if (await dd.isVisible().catch(() => false)) {
         await dd.selectOption({ index: 1 }).catch(() => undefined);
       }
     }
-    await this.clickTileUnder(root, /deposited into/i);
+    await this.clickTileUnder(root, /deposited into|paid into/i);
 
     await this.page.waitForTimeout(200);
     const confirm = root.getByRole('button', { name: /^Confirm$/i }).first();
@@ -381,6 +396,170 @@ export class WizardFlow {
     return 'continue';
   }
 
+  /** Previous / postal address pages still use address-edit's own Next button. */
+  private async extraAddress(): Promise<StepResult> {
+    await this.fillAddress();
+    if (!(await this.w.clickButton(/^(Confirm|Next)$/i))) await this.w.clickPrimary();
+    await this.page.waitForTimeout(800);
+    return 'continue';
+  }
+
+  /**
+   * Benefit review (/budget/benefit-review). Each card must be confirmed before
+   * "Save And Continue" enables. Prefer a status that needs no amount/date
+   * follow-up ("Has Finished" / "Not in my name" / "Finished / not mine").
+   */
+  private async benefitReview(): Promise<StepResult> {
+    for (let i = 0; i < 15; i++) {
+      const pending = this.page
+        .locator('.white-block')
+        .filter({ has: this.page.getByRole('button', { name: /^Confirm$/i }) })
+        .first();
+      if (!(await pending.isVisible().catch(() => false))) break;
+
+      const easy = pending
+        .locator('.std-block, button.std-block')
+        .filter({ hasText: /has finished|finished \/ not mine|one-off|not in my name/i })
+        .first();
+      if (await easy.isVisible().catch(() => false)) {
+        await easy.click().catch(() => undefined);
+      } else {
+        await pending.locator('.std-block, button.std-block').first().click().catch(() => undefined);
+        await this.page.waitForTimeout(300);
+        const amt = pending.locator('input[type="tel"]').first();
+        if ((await amt.isVisible().catch(() => false)) && !(await amt.inputValue().catch(() => ''))) {
+          await amt.click().catch(() => undefined);
+          await amt.pressSequentially('400', { delay: 25 }).catch(() => undefined);
+          await amt.blur().catch(() => undefined);
+        }
+        const selects = pending.locator('select');
+        const sn = await selects.count().catch(() => 0);
+        for (let s = 0; s < sn; s++) {
+          await selects.nth(s).selectOption({ index: 1 }).catch(() => undefined);
+        }
+      }
+
+      await pending.getByRole('button', { name: /^Confirm$/i }).click().catch(() => undefined);
+      await this.page.waitForTimeout(900);
+    }
+
+    if (!(await this.w.clickButton(/^Save And Continue$/i))) await this.w.clickPrimary();
+    return 'continue';
+  }
+
+  /**
+   * No wages found on the statement. "Add Work Income" opens the employment
+   * form so the application can still proceed.
+   */
+  private async noIncome(): Promise<StepResult> {
+    const add = this.page.getByText(/add work income/i).first();
+    if (await add.isVisible().catch(() => false)) {
+      await add.click().catch(() => undefined);
+      await this.page
+        .waitForURL(/\/budget\/employment-income/i, { timeout: 8_000 })
+        .catch(() => undefined);
+      return 'continue';
+    }
+    if (!(await this.w.clickButton(/^Next$/i))) await this.w.clickPrimary();
+    return 'continue';
+  }
+
+  /** Manual wage / self-employed entry after the no-income page. */
+  private async employmentIncome(): Promise<StepResult> {
+    await this.page
+      .locator('app-income-employment-details')
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .catch(() => undefined);
+
+    for (let i = 0; i < 10; i++) {
+      const detail = this.page.locator('app-income-employment-details').first();
+      const confirm = detail.getByRole('button', { name: /^Confirm$/i });
+      if (!(await confirm.isVisible().catch(() => false))) break;
+      await this.confirmOpenDetail(detail);
+      await this.page.waitForTimeout(1200);
+    }
+
+    const next = this.page.getByRole('button', { name: /^Next$/i }).first();
+    for (let i = 0; i < 20; i++) {
+      if (await next.isEnabled().catch(() => false)) break;
+      await this.page.waitForTimeout(400);
+    }
+    if (!(await this.w.clickButton(/^Next$/i))) await this.w.clickPrimary();
+    return 'continue';
+  }
+
+  /**
+   * BNPL / credit-card balance capture. Each creditor needs ownership + amounts
+   * confirmed before "Save And Continue" enables.
+   */
+  private async creditorBalances(): Promise<StepResult> {
+    for (let i = 0; i < 12; i++) {
+      const pending = this.page
+        .locator('.white-block')
+        .filter({ has: this.page.getByRole('button', { name: /^Confirm$/i }) })
+        .first();
+      if (!(await pending.isVisible().catch(() => false))) break;
+
+      await pending.locator('.std-block', { hasText: /this is my account/i }).first().click().catch(() => undefined);
+      await this.page.waitForTimeout(300);
+
+      const inputs = pending.locator('input[type="tel"]');
+      const n = await inputs.count().catch(() => 0);
+      for (let j = 0; j < n; j++) {
+        const el = inputs.nth(j);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        if (await el.inputValue().catch(() => 'x')) continue;
+        await el.click().catch(() => undefined);
+        const id = (await el.getAttribute('id').catch(() => '')) || '';
+        await el.pressSequentially(id.includes('cardLimit') ? '5000' : '500', { delay: 25 }).catch(() => undefined);
+        await el.blur().catch(() => undefined);
+      }
+
+      await pending.getByRole('button', { name: /^Confirm$/i }).click().catch(() => undefined);
+      await this.page.waitForTimeout(700);
+    }
+
+    if (!(await this.w.clickButton(/^Save And Continue$/i))) await this.w.clickPrimary();
+    return 'continue';
+  }
+
+  /**
+   * Additional / general expenses is now a table of amount + frequency rows
+   * with a "Continue" button (no more per-item expense-details forms).
+   */
+  private async generalExpenses(): Promise<StepResult> {
+    const amounts = this.page.locator('input[id^="amount-"]');
+    const n = await amounts.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const el = amounts.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      if (await el.inputValue().catch(() => '')) continue;
+      await el.click().catch(() => undefined);
+      await el.pressSequentially('50', { delay: 25 }).catch(() => undefined);
+      await el.blur().catch(() => undefined);
+    }
+
+    const freqs = this.page.locator('select[id^="frequency-"]');
+    const fn = await freqs.count().catch(() => 0);
+    for (let i = 0; i < fn; i++) {
+      await freqs.nth(i).selectOption({ index: 1 }).catch(() => undefined);
+    }
+
+    if (!(await this.w.clickButton(/^Continue$/i))) await this.w.clickPrimary();
+    await this.page
+      .waitForURL((u) => !/\/budget\/additional-expenses/i.test(u.href), { timeout: 15_000 })
+      .catch(() => undefined);
+    return 'continue';
+  }
+
+  private async loanSecurity(): Promise<StepResult> {
+    await this.w.clickChoice(/^No$/i);
+    await this.page.waitForTimeout(200);
+    await this.w.clickPrimary();
+    return 'continue';
+  }
+
   private async occupancy(): Promise<StepResult> {
     // If you filled the address by hand (hand-over), don't overwrite it.
     const addrVal = await this.page.locator('#oa-street-search, #address').first().inputValue().catch(() => '');
@@ -388,11 +567,17 @@ export class WizardFlow {
       await this.fillAddress();
     }
 
-    for (const sel of ['#from-month', '#from-year']) {
-      const dd = this.page.locator(sel).first();
-      if (await dd.isVisible().catch(() => false)) {
-        await dd.selectOption({ index: 1 }).catch(() => undefined);
-      }
+    const fromMonth = this.page.locator('#from-month').first();
+    if (await fromMonth.isVisible().catch(() => false)) {
+      await fromMonth.selectOption({ index: 1 }).catch(() => undefined);
+    }
+    // Skip the empty option + current year so the "lived here since" date is
+    // clearly in the past (avoids the future-date error).
+    const fromYear = this.page.locator('#from-year').first();
+    if (await fromYear.isVisible().catch(() => false)) {
+      await fromYear.selectOption({ index: 4 }).catch(async () => {
+        await fromYear.selectOption({ index: 1 }).catch(() => undefined);
+      });
     }
 
     // Occupancy group: select only if none is chosen yet (avoid re-toggling).

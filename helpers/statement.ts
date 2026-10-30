@@ -30,6 +30,12 @@ export function loadStatementForCode(verificationCode: string): string {
   customer.reference = next;
   json.customer = customer;
 
+  // A statement copied from live links to a live illion report; Beta must not try to fetch it.
+  if (config.blankReportsLink && json.reportsLink) {
+    json.reportsLink = '';
+    console.log('reportsLink blanked (replayed statement).');
+  }
+
   console.log(`customer.reference: ${previous}  →  ${next}`);
   console.log(`top-level reference left as: ${json.reference}`);
   return JSON.stringify(json);
