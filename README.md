@@ -105,7 +105,7 @@ click through budget → Submit → success → AI email
 | `pages/wizard.helpers.ts` | Generic tile/button clicks + bank network waits |
 | `helpers/stages.ts` | Ordered tracker stages + URL→stage mapping |
 | `helpers/hud.ts` | Injected red/white tracker + click-to-hand-over |
-| `helpers/test-data.ts` | Random Australian applicant (unique email/run) |
+| `helpers/test-data.ts` | Random Australian applicant (unique email/run), overridable with `APPLICANT_*` |
 | `helpers/statement.ts` | Patch reference + POST statement |
 | `helpers/config.ts` | Target (beta/local) + settings |
 | `run-robot.ps1` / `.bat` / `SafeRobot.exe` | One-click launchers |
@@ -118,4 +118,10 @@ click through budget → Submit → success → AI email
   repeats in the tracker.
 - **Wrong prefix** → API returns `Invalid reference`. Beta `OnlineAppCode` is `SFPM`.
 - **Local run does nothing** → the Angular dev server (`:4200`) isn't running.
+- **Declined, so no Adam or Nexus** → the random applicant is a new client, and Albert declines
+  new clients whose statement has 3 or more SACC dishonours (reason 97) or 10 or more dishonours
+  (reason 98). Run again as the statement's real borrower, so that Albert matches an existing
+  client: set `APPLICANT_FIRST_NAME`, `APPLICANT_LAST_NAME`, `APPLICANT_DOB` (YYYY-MM-DD) and
+  `APPLICANT_LICENCE` (`APPLICANT_PHONE` and `APPLICANT_EMAIL` are optional). Leave the email
+  unset, because the wizard rejects an email that was used before.
 - Creates **real applications** on whichever target — that's intentional for a robot.
